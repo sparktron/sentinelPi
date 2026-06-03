@@ -42,6 +42,13 @@ except ImportError:
     FLASK_AVAILABLE = False
     logger.warning("Flask not available — web dashboard disabled.")
 
+try:
+    # Production-grade, pure-Python WSGI server with a real shutdown API.
+    from waitress import create_server as _create_waitress_server
+    WAITRESS_AVAILABLE = True
+except ImportError:
+    WAITRESS_AVAILABLE = False
+
 if TYPE_CHECKING:
     from ..config.manager import Config
     from ..storage.database import Database
@@ -301,13 +308,20 @@ def _generate_daily_report(db, device_tracker, baseline) -> dict:
 
 class DashboardServer:
     """
-    Wrapper that runs the Flask dashboard in a dedicated daemon thread.
+    Runs the dashboard WSGI app in a dedicated daemon thread.
+
+    Prefers waitress (production-grade, pure-Python) so we get a real, graceful
+    shutdown via stop(). If waitress is not installed we fall back to Flask's
+    Werkzeug dev server with a loud warning — that path has no clean shutdown
+    and is only appropriate for local development.
     """
 
     def __init__(self, app: "Flask", config: "Config") -> None:
         self._app = app
         self._config = config
         self._thread: Optional[threading.Thread] = None
+        # waitress server handle, set only on the waitress path; gives us .close().
+        self._server = None
 
     def start(self) -> None:
         if not FLASK_AVAILABLE or self._app is None:
@@ -330,8 +344,29 @@ class DashboardServer:
             )
             return
 
+        if WAITRESS_AVAILABLE:
+            self._start_waitress(host, port)
+        else:
+            logger.warning(
+                "waitress not installed — falling back to the Flask/Werkzeug dev server. "
+                "This has no graceful shutdown and is not hardened; install waitress for "
+                "production use (pip install waitress)."
+            )
+            self._start_dev_server(host, port)
+
+        logger.info("Dashboard started at http://%s:%d/", host, port)
+
+    def _start_waitress(self, host: str, port: int) -> None:
+        # create_server binds the socket synchronously, so a bad bind raises here
+        # (on the caller's thread) rather than dying silently in the worker.
+        self._server = _create_waitress_server(self._app, host=host, port=port)
+        self._thread = threading.Thread(
+            target=self._server.run, daemon=True, name="DashboardServer"
+        )
+        self._thread.start()
+
+    def _start_dev_server(self, host: str, port: int) -> None:
         def run():
-            # Use werkzeug's built-in server — fine for local single-user dashboard
             self._app.run(
                 host=host,
                 port=port,
@@ -342,9 +377,20 @@ class DashboardServer:
 
         self._thread = threading.Thread(target=run, daemon=True, name="DashboardServer")
         self._thread.start()
-        logger.info("Dashboard started at http://%s:%d/", host, port)
 
-    def stop(self) -> None:
-        # Flask dev server doesn't have a clean shutdown API;
-        # since it's a daemon thread it'll die with the main process.
-        logger.info("Dashboard server stopping (daemon thread will exit with main process).")
+    def stop(self, timeout: float = 5.0) -> None:
+        if self._server is not None:
+            # waitress: closing the server breaks its serve loop, so run() returns
+            # and the thread exits cleanly.
+            logger.info("Stopping dashboard server (graceful)…")
+            try:
+                self._server.close()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Error closing dashboard server: %s", exc)
+            if self._thread is not None:
+                self._thread.join(timeout=timeout)
+            self._server = None
+        else:
+            # Dev-server fallback has no clean shutdown API; as a daemon thread it
+            # dies with the main process.
+            logger.info("Dashboard server stopping (dev server — daemon thread exits with process).")

@@ -13,13 +13,14 @@ racy detectors.
 - ✅ Fix concurrency (locks), reverse-DNS, dedup memory, baseline math, dashboard auth (see review C1/C2/H1/H2/H4).
 - ✅ Add a concurrency stress test and a migration test so the new features below have a safety net.
 - ✅ Introduce a single `clock` abstraction (timezone-aware) to make detection deterministic and testable (review M1).
-- ⬜ Production dashboard server + clean shutdown (review H3). _Remaining._
+- ✅ Production dashboard server + clean shutdown (review H3).
 
 **Outcome:** a daemon you can trust to run for months.
 
-_Status 2026-06-02: the five High/Critical items plus the timezone-aware clock (M1)
-are fixed with regression tests; suite green at 74 tests. The production web server
-(H3) is the one open Phase 0 item; the rest is M2–M6 / L1–L6 hardening and polish._
+_Status 2026-06-02: **Phase 0 complete.** All Critical/High items plus the
+timezone-aware clock (M1) and production web server (H3) are fixed with regression
+tests; suite green at 77 tests. Remaining review items are M2–M6 / L1–L6 hardening
+and polish — none block Phase 1._
 
 ---
 

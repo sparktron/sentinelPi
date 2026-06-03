@@ -31,7 +31,7 @@ _Updated 2026-06-02. Full suite green at 68 tests._
 | H4 — baseline variance math + atomicity | ✅ Fixed | `update_hourly_baseline` is now an atomic upsert snapshotting the authoritative in-memory `RunningStats` (single source of truth). Test: `test_baseline_persistence.py`. |
 | (bug) DB init crash | ✅ Fixed | `_conn()` guarded on `conn.in_transaction` — `executescript()` in migrations implicitly commits. Test: `test_db_migrations.py`. |
 | M1 — `datetime.utcnow()` naïve/deprecated; timezone-aware `clock` | ✅ Fixed | New `utils/clock.py` (aware UTC, injectable `FixedClock`). All `utcnow()` routed through `clock.now()`; dropped `isoformat() + "Z"` double-labeling. Quiet-hours intentionally stays local wall-clock. Test: `test_clock.py`. |
-| H3 — Flask dev server / no clean shutdown | ⬜ Open | Fail-closed bind reduces exposure; production server (waitress) still TODO. |
+| H3 — Flask dev server / no clean shutdown | ✅ Fixed | `DashboardServer` prefers waitress (graceful `stop()` via `server.close()` + thread join); falls back to the dev server with a warning when waitress is absent. Test: `test_dashboard_server.py`. |
 | M2–M6, L1–L6 | ⬜ Open | Hardening/polish; see below. |
 
 ---
