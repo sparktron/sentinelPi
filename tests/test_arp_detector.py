@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 from datetime import datetime, timedelta
+from sentinelpi.utils import clock
 
 from sentinelpi.detectors.arp_detector import ARPDetector
 from sentinelpi.models import AlertCategory, Severity
@@ -54,7 +55,7 @@ class TestARPDetector:
 
         # First, establish the known gateway MAC
         known_gateway = CapturedARP(
-            timestamp=datetime.utcnow(),
+            timestamp=clock.now(),
             op=2,
             src_mac="aa:bb:cc:00:00:01",
             src_ip="192.168.1.1",
@@ -83,7 +84,7 @@ class TestARPDetector:
     def test_arp_conflict_triggers_high_alert(self, arp_detector):
         """Two different MACs claiming same IP should produce HIGH alert."""
         from sentinelpi.capture.packet_capture import CapturedARP
-        now = datetime.utcnow()
+        now = clock.now()
 
         # Establish IP 192.168.1.50 → MAC aaa
         legit = CapturedARP(
@@ -113,7 +114,7 @@ class TestARPDetector:
     def test_arp_reply_flood_triggers_alert(self, arp_detector):
         """Rapid ARP replies from one MAC should trigger flood alert."""
         from sentinelpi.capture.packet_capture import CapturedARP
-        now = datetime.utcnow()
+        now = clock.now()
 
         alerts = []
         # Send 25 replies in 5 seconds from same MAC

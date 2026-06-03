@@ -21,6 +21,7 @@ import re
 import threading
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+from ..utils import clock
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -153,7 +154,7 @@ class AuthLogDetector(BaseDetector):
             return []
 
         alerts: List[Alert] = []
-        now = datetime.utcnow()
+        now = clock.now()
 
         # SSH login failure
         m = PATTERNS["ssh_failure"].search(line)

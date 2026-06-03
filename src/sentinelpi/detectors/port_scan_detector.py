@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+from ..utils import clock
 from typing import Dict, List, Optional, Set, Tuple
 
 from .base import BaseDetector
@@ -64,7 +65,7 @@ class PortScanDetector(BaseDetector):
         from ..capture.proc_reader import read_tcp_connections
         alerts: List[Alert] = []
         connections = read_tcp_connections(include_listen=False)
-        now = datetime.utcnow()
+        now = clock.now()
 
         # Bound memory: drop idle flow keys (older than the detection window) and
         # expired suppression entries. The deques are maxlen-bounded already; this

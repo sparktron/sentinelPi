@@ -19,6 +19,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from ..utils import clock
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Generator
 
@@ -431,7 +432,7 @@ class Database:
         Snapshotting the in-memory stats keeps a single source of truth and makes
         the write a single atomic statement.
         """
-        now = datetime.utcnow().isoformat()
+        now = clock.now().isoformat()
         with self._conn() as conn:
             conn.execute(
                 """
@@ -457,7 +458,7 @@ class Database:
 
     def record_destination(self, src_ip: str, dst_ip: str, dst_port: int, protocol: str) -> None:
         """Record or increment a known (src→dst:port) destination."""
-        now = datetime.utcnow().isoformat()
+        now = clock.now().isoformat()
         with self._conn() as conn:
             conn.execute(
                 """
@@ -480,7 +481,7 @@ class Database:
 
     def record_dns_domain(self, domain: str) -> None:
         """Record a DNS domain as observed."""
-        now = datetime.utcnow().isoformat()
+        now = clock.now().isoformat()
         with self._conn() as conn:
             conn.execute(
                 """
@@ -545,7 +546,7 @@ class Database:
         with self._conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO file_hashes (path, sha256, recorded_at) VALUES (?,?,?)",
-                (path, sha256, datetime.utcnow().isoformat()),
+                (path, sha256, clock.now().isoformat()),
             )
 
     # ------------------------------------------------------------------
@@ -554,7 +555,7 @@ class Database:
 
     def purge_old_records(self) -> None:
         """Delete records older than retention_days. Called periodically."""
-        cutoff = (datetime.utcnow() - timedelta(days=self.retention_days)).isoformat()
+        cutoff = (clock.now() - timedelta(days=self.retention_days)).isoformat()
         with self._conn() as conn:
             r1 = conn.execute("DELETE FROM alerts WHERE timestamp < ?", (cutoff,))
             r2 = conn.execute("DELETE FROM dns_observations WHERE timestamp < ?", (cutoff,))

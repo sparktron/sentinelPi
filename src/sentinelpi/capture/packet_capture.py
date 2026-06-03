@@ -23,6 +23,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from ..utils import clock
 from typing import Callable, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -197,7 +198,7 @@ class PacketCapture:
         Never raises — exceptions here would kill the sniff thread.
         """
         try:
-            now = datetime.utcnow()
+            now = clock.now()
             event: Optional[CaptureEvent] = None
 
             if pkt.haslayer(ARP):

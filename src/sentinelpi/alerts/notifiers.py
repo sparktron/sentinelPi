@@ -54,7 +54,7 @@ class BaseNotifier(ABC):
         """Convert an Alert to a JSON-serializable dict."""
         return {
             "alert_id": alert.alert_id,
-            "timestamp": alert.timestamp.isoformat() + "Z",
+            "timestamp": alert.timestamp.isoformat(),
             "severity": alert.severity.value,
             "category": alert.category.value,
             "affected_host": alert.affected_host,

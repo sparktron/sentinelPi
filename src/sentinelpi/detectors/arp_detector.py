@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+from ..utils import clock
 from typing import Dict, List, Optional, Set, Tuple
 
 from .base import BaseDetector
@@ -79,7 +80,7 @@ class ARPDetector(BaseDetector):
         from ..capture.proc_reader import read_arp_table
         alerts: List[Alert] = []
         entries = read_arp_table()
-        now = datetime.utcnow()
+        now = clock.now()
 
         for entry in entries:
             mac = normalize_mac(entry.mac)

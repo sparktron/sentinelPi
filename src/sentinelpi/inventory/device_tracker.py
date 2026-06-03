@@ -19,6 +19,7 @@ import threading
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta
+from ..utils import clock
 from typing import Dict, List, Optional, Tuple
 
 from ..config.manager import Config, get_trusted_ips, get_trusted_macs
@@ -122,7 +123,7 @@ class DeviceTracker:
     def _process_arp_entry(self, entry: ARPEntry) -> List[Alert]:
         """Process a single ARP table entry and detect anomalies."""
         alerts: List[Alert] = []
-        now = datetime.utcnow()
+        now = clock.now()
 
         with self._lock:
             existing = self._devices_by_ip.get(entry.ip)
@@ -182,7 +183,7 @@ class DeviceTracker:
         If more than 5 MAC changes occur within 2 minutes, flag it.
         """
         with self._lock:
-            now = datetime.utcnow()
+            now = clock.now()
             cutoff = now - timedelta(seconds=self.config.thresholds.arp_mac_change_window_seconds)
             recent = [t for t in self._churn_times if t > cutoff]
 

@@ -11,7 +11,9 @@ Features:
 
 Security:
 - Binds to 127.0.0.1 by default (never exposed to network unless configured)
-- Optional access token in Authorization header or query param
+- Access token required on every route, supplied via the Authorization header
+  only (never the query string); auto-generated and logged once if unset
+- Refuses to bind to a non-loopback host with no token (fail closed)
 - No user input is ever evaluated as code
 - All dynamic data is JSON-serialized (no raw template injection)
 """
@@ -25,6 +27,7 @@ import logging
 import secrets
 import threading
 from datetime import datetime, timedelta
+from ..utils import clock
 from functools import wraps
 from typing import TYPE_CHECKING, Optional
 
@@ -124,7 +127,7 @@ def create_app(
     @app.route("/api/status")
     @require_token
     def api_status():
-        now = datetime.utcnow()
+        now = clock.now()
         last_24h = now - timedelta(hours=24)
         counts = db.get_alert_counts_by_severity(last_24h)
         baseline_summary = baseline.get_summary()
@@ -132,7 +135,7 @@ def create_app(
 
         return jsonify({
             "status": "running",
-            "timestamp": now.isoformat() + "Z",
+            "timestamp": now.isoformat(),
             "alert_counts_24h": counts,
             "device_count": device_tracker.get_device_count(),
             "baseline": baseline_summary,
@@ -148,7 +151,7 @@ def create_app(
         status = request.args.get("status")
         host = request.args.get("host")
 
-        since = datetime.utcnow() - timedelta(hours=hours)
+        since = clock.now() - timedelta(hours=hours)
         sev_filter = Severity(severity) if severity else None
         status_filter = AlertStatus(status) if status else None
 
@@ -226,7 +229,7 @@ def create_app(
 def _alert_to_dict(alert) -> dict:
     return {
         "alert_id": alert.alert_id,
-        "timestamp": alert.timestamp.isoformat() + "Z",
+        "timestamp": alert.timestamp.isoformat(),
         "severity": alert.severity.value,
         "category": alert.category.value,
         "affected_host": alert.affected_host,
@@ -246,8 +249,8 @@ def _device_to_dict(device) -> dict:
         "mac": device.mac,
         "hostname": device.hostname,
         "vendor": device.vendor,
-        "first_seen": device.first_seen.isoformat() + "Z",
-        "last_seen": device.last_seen.isoformat() + "Z",
+        "first_seen": device.first_seen.isoformat(),
+        "last_seen": device.last_seen.isoformat(),
         "is_trusted": device.is_trusted,
         "is_gateway": device.is_gateway,
         "alert_count": device.alert_count,
@@ -257,7 +260,7 @@ def _device_to_dict(device) -> dict:
 
 def _generate_daily_report(db, device_tracker, baseline) -> dict:
     """Generate a daily summary report."""
-    now = datetime.utcnow()
+    now = clock.now()
     since = now - timedelta(hours=24)
 
     alerts = db.get_recent_alerts(limit=1000, since=since)
@@ -285,7 +288,7 @@ def _generate_daily_report(db, device_tracker, baseline) -> dict:
 
     return {
         "period": "last_24h",
-        "generated_at": now.isoformat() + "Z",
+        "generated_at": now.isoformat(),
         "total_alerts": len(alerts),
         "alerts_by_severity": by_severity,
         "alerts_by_category": by_category,

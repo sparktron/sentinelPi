@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sentinelpi.detectors.base import BaseDetector
+from sentinelpi.utils import clock
 
 
 class _Bare(BaseDetector):
@@ -26,7 +27,7 @@ class _Bare(BaseDetector):
 
 
 def test_evict_expired_times_drops_only_old_keys():
-    now = datetime.utcnow()
+    now = clock.now()
     time_map = {
         "fresh": now - timedelta(seconds=10),
         "stale": now - timedelta(seconds=400),
@@ -40,7 +41,7 @@ def test_evict_expired_times_drops_only_old_keys():
 
 
 def test_evict_idle_deques_handles_tuple_and_bare_entries():
-    now = datetime.utcnow()
+    now = clock.now()
     deque_map = {
         "active_tuple": deque([(now - timedelta(seconds=5), 22)]),
         "idle_tuple": deque([(now - timedelta(seconds=120), 80)]),
@@ -63,13 +64,13 @@ def test_alert_manager_dedup_cache_is_bounded():
     am._lock = threading.Lock()
     am._recent_dedup = {}
 
-    old = datetime.utcnow() - timedelta(seconds=mgr._MAX_COOLDOWN_SECONDS + 600)
+    old = clock.now() - timedelta(seconds=mgr._MAX_COOLDOWN_SECONDS + 600)
     # Fill well past the prune threshold with already-expired keys.
     for i in range(mgr._DEDUP_PRUNE_THRESHOLD + 500):
         am._recent_dedup[f"expired:{i}"] = old
     # A couple of fresh + mute entries that must survive.
-    am._recent_dedup["fresh"] = datetime.utcnow()
-    am._recent_dedup["mute"] = datetime.utcnow() + timedelta(days=7)
+    am._recent_dedup["fresh"] = clock.now()
+    am._recent_dedup["mute"] = clock.now() + timedelta(days=7)
 
     am._prune_dedup()
 

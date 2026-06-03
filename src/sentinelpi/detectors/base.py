@@ -19,6 +19,7 @@ import logging
 import threading
 from abc import ABC
 from datetime import datetime, timedelta
+from ..utils import clock
 from typing import Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -110,7 +111,7 @@ class BaseDetector(ABC):
         Used for suppression/cooldown maps (e.g. _last_alert). Returns the number
         of keys evicted. Caller must hold the detector lock.
         """
-        cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+        cutoff = clock.now() - timedelta(seconds=max_age_seconds)
         stale = [key for key, ts in time_map.items() if ts < cutoff]
         for key in stale:
             del time_map[key]
@@ -126,7 +127,7 @@ class BaseDetector(ABC):
         is the datetime (e.g. (timestamp, port)); both forms are supported.
         Returns the number of keys evicted. Caller must hold the detector lock.
         """
-        cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+        cutoff = clock.now() - timedelta(seconds=max_age_seconds)
 
         def _newest(dq) -> datetime:
             entry = dq[-1]

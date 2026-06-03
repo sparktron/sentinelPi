@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timedelta
+from ..utils import clock
 from typing import Callable, Dict, List, Optional
 
 from ..models import Alert, AlertCategory, AlertStatus, Severity
@@ -200,7 +201,7 @@ class AlertManager:
         """
         if len(self._recent_dedup) <= _DEDUP_PRUNE_THRESHOLD:
             return
-        cutoff = datetime.utcnow() - timedelta(seconds=_MAX_COOLDOWN_SECONDS)
+        cutoff = clock.now() - timedelta(seconds=_MAX_COOLDOWN_SECONDS)
         expired = [key for key, ts in self._recent_dedup.items() if ts < cutoff]
         for key in expired:
             del self._recent_dedup[key]
@@ -248,7 +249,7 @@ class AlertManager:
             if alert:
                 # Add to dedup cache with a long TTL
                 with self._lock:
-                    self._recent_dedup[alert.dedup_key] = datetime.utcnow() + timedelta(days=7)
+                    self._recent_dedup[alert.dedup_key] = clock.now() + timedelta(days=7)
             return True
         except Exception as exc:
             logger.error("Failed to mute alert %s: %s", alert_id, exc)
