@@ -161,10 +161,12 @@ class BaselineEngine:
                 self._conn_stats[key] = RunningStats()
             self._conn_stats[key].update(float(count))
 
-        # Persist to database periodically (every 10 updates)
+        # Persist a snapshot of the authoritative in-memory stats periodically
+        # (every 10 updates). The DB row mirrors RunningStats — it is not a
+        # second, independently-derived estimate.
         stats = self._conn_stats.get(key)
         if stats and stats.n % 10 == 0:
-            self.db.update_hourly_baseline(ip, hour, dow, float(count))
+            self.db.update_hourly_baseline(ip, hour, dow, stats.mean, stats.stddev, stats.n)
 
     def check_connection_spike(self, ip: str, current_count: int) -> Tuple[bool, float]:
         """

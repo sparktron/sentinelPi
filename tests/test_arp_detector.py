@@ -147,7 +147,8 @@ class TestARPDetector:
             flags="0x2",
         )
 
-        with patch("sentinelpi.detectors.arp_detector.read_arp_table", return_value=[new_device_entry]):
+        # _poll() imports read_arp_table at call time from proc_reader, so patch it there.
+        with patch("sentinelpi.capture.proc_reader.read_arp_table", return_value=[new_device_entry]):
             alerts = arp_detector.poll()
 
         # The device tracker should have detected it as new

@@ -46,6 +46,16 @@ CATEGORY_COOLDOWNS: Dict[AlertCategory, int] = {
     AlertCategory.SYSTEM:             300,
 }
 
+# Longest cooldown any category uses — a dedup entry older than this can never
+# suppress a future alert, so it is safe to evict.
+_MAX_COOLDOWN_SECONDS = max(CATEGORY_COOLDOWNS.values())
+
+# When the in-memory dedup cache grows past this, sweep expired keys. Keeps the
+# map bounded on a busy network (per-domain / per-host / per-flow keys would
+# otherwise accumulate for the life of the daemon). Mutes store a far-future
+# timestamp and are intentionally retained.
+_DEDUP_PRUNE_THRESHOLD = 2048
+
 
 class AlertManager:
     """
@@ -111,8 +121,9 @@ class AlertManager:
                 logger.debug("Dedup suppressed: %s", alert.dedup_key)
                 return False
 
-            # 3. Record this alert in dedup cache
+            # 3. Record this alert in dedup cache (and bound its growth)
             self._recent_dedup[alert.dedup_key] = alert.timestamp
+            self._prune_dedup()
 
             self._total_fired += 1
 
@@ -177,6 +188,24 @@ class AlertManager:
             logger.debug("Dedup DB check failed: %s", exc)
 
         return False
+
+    def _prune_dedup(self) -> None:
+        """
+        Evict dedup entries older than the longest cooldown so the in-memory
+        cache stays bounded. Caller must hold self._lock.
+
+        Only sweeps once the cache exceeds a soft threshold (the sweep is O(n),
+        and below the threshold the memory is negligible). Mute entries carry a
+        far-future timestamp and are deliberately kept.
+        """
+        if len(self._recent_dedup) <= _DEDUP_PRUNE_THRESHOLD:
+            return
+        cutoff = datetime.utcnow() - timedelta(seconds=_MAX_COOLDOWN_SECONDS)
+        expired = [key for key, ts in self._recent_dedup.items() if ts < cutoff]
+        for key in expired:
+            del self._recent_dedup[key]
+        if expired:
+            logger.debug("Pruned %d expired dedup entries", len(expired))
 
     def _is_quiet_hours(self) -> bool:
         """Check if the current time falls within configured quiet hours."""

@@ -87,7 +87,7 @@ class AuthLogDetector(BaseDetector):
         # Alert cooldowns
         self._last_alert: Dict[str, datetime] = {}
 
-    def poll(self) -> List[Alert]:
+    def _poll(self) -> List[Alert]:
         """Read new log entries since last poll."""
         if not self.config.monitoring.auth_log_enabled:
             return []

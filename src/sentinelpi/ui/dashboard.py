@@ -18,8 +18,11 @@ Security:
 
 from __future__ import annotations
 
+import hmac
+import ipaddress
 import json
 import logging
+import secrets
 import threading
 from datetime import datetime, timedelta
 from functools import wraps
@@ -44,6 +47,17 @@ if TYPE_CHECKING:
     from ..alerts.manager import AlertManager
 
 
+def _is_loopback(host: str) -> bool:
+    """True if host binds only to the loopback interface (no network exposure)."""
+    if host in ("localhost", ""):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        # Unknown hostname — treat as non-loopback (fail safe / err on exposed).
+        return False
+
+
 def create_app(
     config: "Config",
     db: "Database",
@@ -60,10 +74,24 @@ def create_app(
         return None
 
     app = Flask(__name__, template_folder="templates")
-    app.config["SECRET_KEY"] = "sentinelpi-dashboard-key"
+    # Random per-process secret — never a hardcoded value (signs Flask sessions/flashes).
+    app.config["SECRET_KEY"] = secrets.token_hex(32)
+
+    # Secure by default: if no token was configured, generate one and log it
+    # once. This means the dashboard — which exposes the full network picture
+    # and trust/ack/mute mutation endpoints — is never unauthenticated.
+    if not config.dashboard.access_token:
+        config.dashboard.access_token = secrets.token_urlsafe(32)
+        logger.warning(
+            "No dashboard access_token configured — generated a random one for this run:\n"
+            "    %s\n"
+            "Pass it as 'Authorization: Bearer <token>'. Set dashboard.access_token in config "
+            "to make it stable across restarts.",
+            config.dashboard.access_token,
+        )
 
     # ------------------------------------------------------------------
-    # Authentication middleware (optional token)
+    # Authentication middleware (token required, header only)
     # ------------------------------------------------------------------
 
     def require_token(f):
@@ -71,13 +99,15 @@ def create_app(
         def decorated(*args, **kwargs):
             token = config.dashboard.access_token
             if not token:
-                return f(*args, **kwargs)
-            # Accept token via Authorization header or ?token= query param
-            provided = (
-                request.headers.get("Authorization", "").replace("Bearer ", "")
-                or request.args.get("token", "")
-            )
-            if provided != token:
+                # Fail closed: an empty token should be impossible (auto-generated
+                # above), but if it ever happens, deny rather than expose.
+                abort(401)
+            # Header only — never accept the token via query string, which lands
+            # in access logs, browser history, and Referer headers.
+            auth = request.headers.get("Authorization", "")
+            provided = auth[7:] if auth.startswith("Bearer ") else ""
+            # Constant-time compare to avoid leaking the token via timing.
+            if not provided or not hmac.compare_digest(provided, token):
                 abort(401)
             return f(*args, **kwargs)
         return decorated
@@ -283,6 +313,19 @@ class DashboardServer:
 
         host = self._config.dashboard.host
         port = self._config.dashboard.port
+
+        # Fail closed: refuse to expose the dashboard on a non-loopback address
+        # without authentication. create_app() auto-generates a token, so this
+        # should never trip in normal use — it guards against a misconfigured
+        # config object reaching the server with auth disabled.
+        if not self._config.dashboard.access_token and not _is_loopback(host):
+            logger.error(
+                "Refusing to bind dashboard to non-loopback host %s with no access_token "
+                "(would expose an unauthenticated control panel). Set dashboard.access_token "
+                "or bind to 127.0.0.1.",
+                host,
+            )
+            return
 
         def run():
             # Use werkzeug's built-in server — fine for local single-user dashboard

@@ -71,10 +71,15 @@ class ConnectionDetector(BaseDetector):
         # Alert cooldowns
         self._last_alert: Dict[str, datetime] = {}
 
-    def poll(self) -> List[Alert]:
+    def _poll(self) -> List[Alert]:
         """Sample connection state from /proc/net/tcp."""
         alerts: List[Alert] = []
         now = datetime.utcnow()
+
+        # Bound memory: suppression keys (incl. per-destination keys with a 24h
+        # cooldown) and idle refused-connection flows would otherwise accumulate.
+        self._evict_expired_times(self._last_alert, 86400)
+        self._evict_idle_deques(self._refused_times, 3600)
 
         # --- Connection count monitoring ---
         connections = read_tcp_connections(include_listen=False)

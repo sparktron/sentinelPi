@@ -64,13 +64,13 @@ class ARPDetector(BaseDetector):
             if device.is_gateway:
                 self._known_gateway_mac = device.mac
 
-    def process_event(self, event: object) -> List[Alert]:
+    def _process_event(self, event: object) -> List[Alert]:
         """Process a CapturedARP event from packet capture."""
         if not isinstance(event, CapturedARP):
             return []
         return self._analyze_arp(event)
 
-    def poll(self) -> List[Alert]:
+    def _poll(self) -> List[Alert]:
         """
         Cross-check /proc/net/arp against our known state.
 

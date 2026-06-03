@@ -70,7 +70,7 @@ class BeaconDetector(BaseDetector):
         # Last time we ran cleanup
         self._last_cleanup: datetime = datetime.utcnow()
 
-    def process_event(self, event: object) -> List[Alert]:
+    def _process_event(self, event: object) -> List[Alert]:
         """Process outbound connection events."""
         if not isinstance(event, CapturedConnection):
             return []
@@ -92,7 +92,7 @@ class BeaconDetector(BaseDetector):
 
         return self._analyze_flow(key, timestamps)
 
-    def poll(self) -> List[Alert]:
+    def _poll(self) -> List[Alert]:
         """
         Periodically check connection data from /proc/net for beacon patterns.
 
