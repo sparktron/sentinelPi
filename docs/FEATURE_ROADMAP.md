@@ -49,8 +49,11 @@ Make every alert more actionable without new detectors.
   _Shipped: `detectors/geo_country_detector.py` — per-host country baseline persisted in the new
   `host_countries` table (schema v4); alerts MEDIUM on a first-seen country (after the learning
   phase), staying silent without a GeoIP DB. Gated on `monitoring.geo_enabled`. Tests in
-  `test_geo_country_detector.py`. Follow-up: attach country to **every** external-connection alert
-  (broad enrichment of the other detectors), not just this one._
+  `test_geo_country_detector.py`._
+- ✅ **Alert enrichment (GeoIP + ASN everywhere).** Every alert is centrally enriched in the
+  `AlertManager` with the external IP's country + ASN/org — structured `extra["enrichment"]`, a
+  compact description suffix, and an `enrichment` field on the dashboard alert API. No-op without
+  the optional databases. Tests in `test_alert_enrichment.py`._
 - ✅ **ASN / hosting-provider tagging.** Connections to suspicious ASNs/operators flag and raise
   suspicion. _Shipped: `utils/asn.py` (GeoLite2-ASN lookup, graceful degrade, singleton) +
   `detectors/asn_detector.py` (matches configured `suspicious_asns` / operator-name keywords +

@@ -275,6 +275,7 @@ def _alert_to_dict(alert) -> dict:
         "recommended_action": alert.recommended_action,
         "confidence": round(alert.confidence, 3),
         "status": alert.status.value,
+        "enrichment": alert.extra.get("enrichment"),
     }
 
 
