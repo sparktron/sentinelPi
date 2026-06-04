@@ -28,6 +28,9 @@ from ..models import Alert, AlertCategory, AlertStatus, Severity
 from ..storage.database import Database
 from ..inventory.device_tracker import DeviceTracker
 from ..config.manager import Config
+from ..utils.network import is_private_ip, is_valid_ip
+from ..utils.geo import lookup_country, lookup_country_name
+from ..utils.asn import lookup_asn
 from .notifiers import BaseNotifier
 
 logger = logging.getLogger(__name__)
@@ -130,6 +133,11 @@ class AlertManager:
             self._total_fired += 1
 
         # Outside lock: DB write and notifier calls (may be slow)
+        # 3b. Enrich with GeoIP country + ASN for the external IP (centralized
+        #     so every detector's alerts get consistent context). No-op when the
+        #     geo/asn databases aren't loaded.
+        self._enrich_alert(alert)
+
         # 4. Persist to database
         try:
             self.db.save_alert(alert)
@@ -222,6 +230,45 @@ class AlertManager:
         else:
             # Wraps midnight: e.g., 23–7
             return current_hour >= start or current_hour < end
+
+    def _enrich_alert(self, alert: Alert) -> None:
+        """
+        Attach GeoIP country + ASN context for the external IP in this alert.
+
+        Looks at related_host first (usually the external destination), then
+        affected_host, and enriches the first public IP found. Writes a structured
+        ``extra["enrichment"]`` and appends a compact human-readable suffix to the
+        description. A no-op when neither geo nor ASN data is available, so it is
+        safe regardless of which optional databases are installed.
+        """
+        if alert.extra.get("enrichment"):
+            return  # already enriched (idempotent)
+
+        for ip in (alert.related_host, alert.affected_host):
+            if not ip or not is_valid_ip(ip) or is_private_ip(ip):
+                continue
+
+            country = lookup_country(ip)
+            country_name = lookup_country_name(ip)
+            asn, org = lookup_asn(ip)
+            if not country and not asn:
+                continue  # geo/asn databases not loaded for this IP
+
+            enrichment: Dict[str, object] = {"ip": ip}
+            bits: List[str] = []
+            if country:
+                enrichment["country"] = country
+                enrichment["country_name"] = country_name or country
+                bits.append(country_name or country)
+            if asn:
+                enrichment["asn"] = asn
+                enrichment["asn_org"] = org
+                bits.append(f"AS{asn}{' ' + org if org else ''}")
+
+            alert.extra["enrichment"] = enrichment
+            if bits:
+                alert.description = f"{alert.description} [{', '.join(bits)}]"
+            return
 
     def _suspicion_delta(self, alert: Alert) -> float:
         """Return suspicion score increment based on alert severity."""
