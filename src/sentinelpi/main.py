@@ -49,6 +49,7 @@ from .alerts.notifiers import ConsoleNotifier, FileNotifier, EmailNotifier, Webh
 from .responders.manager import ResponderManager
 from .responders.firewall import FirewallResponder
 from .responders.dns_sinkhole import DNSSinkholeResponder
+from .responders.arp_restore import ARPRestoreResponder
 from .detectors.arp_detector import ARPDetector
 from .detectors.beacon_detector import BeaconDetector
 from .detectors.connection_detector import ConnectionDetector
@@ -271,6 +272,8 @@ class SentinelPi:
             manager.add_responder(FirewallResponder(self.config))
         if rc.dns_sinkhole_enabled:
             manager.add_responder(DNSSinkholeResponder(self.config))
+        if rc.arp_restore_enabled:
+            manager.add_responder(ARPRestoreResponder(self.config))
         self._alert_manager.set_responder_manager(manager)
         self._responder_manager = manager
         mode = "DRY-RUN" if rc.dry_run else "ARMED"

@@ -72,7 +72,10 @@ Move from detect-only to detect-and-respond. **Gate every action behind explicit
   threat_intel/HIGH only), never blocks private/whitelisted IPs. Wired into the AlertManager.
   Tests in `test_responders.py`._
   - ✅ **Quarantine** a host via `iptables`/`nftables` drop rules (outbound + inbound DROP).
-  - **ARP-spoof defense:** pin gateway MAC and auto-restore the correct ARP entry on detected poisoning.
+  - ✅ **ARP-spoof defense:** pin the configured gateway MAC and re-assert the correct ARP entry on
+    detected poisoning. _Shipped: `responders/arp_restore.py` — on a gateway ARP-anomaly, restores
+    `network.gateway_mac` via `arp -s` or `ip neigh replace` (only when gateway IP+MAC are
+    configured). Tests in `test_arp_restore.py`._
   - ✅ **DNS sinkhole:** block a malicious domain at the resolver when a DGA/C2/threat-intel domain
     fires. _Shipped: `responders/dns_sinkhole.py` — backends `hosts` (append `0.0.0.0 <domain>`,
     idempotent), `pihole` (`pihole -b`), `unbound` (`local_zone … always_nxdomain`); category/

@@ -274,3 +274,9 @@ response:
     - threat_intel
     - dns_anomaly
   sinkhole_min_severity: high
+
+  # ARP-spoof auto-restore: re-pin the trusted gateway MAC on poisoning.
+  # Requires network.gateway_ip and network.gateway_mac to be set (the truth).
+  arp_restore_enabled: false
+  arp_restore_backend: arp            # arp | ip
+  arp_restore_min_severity: high

@@ -218,6 +218,11 @@ class ResponseConfig:
     sinkhole_categories: List[str] = field(default_factory=lambda: ["threat_intel", "dns_anomaly"])
     sinkhole_min_severity: str = "high"
 
+    # ARP-spoof auto-restore responder (pins the trusted gateway MAC on poisoning).
+    arp_restore_enabled: bool = False
+    arp_restore_backend: str = "arp"            # "arp" | "ip"
+    arp_restore_min_severity: str = "high"
+
 
 @dataclass
 class Config:
