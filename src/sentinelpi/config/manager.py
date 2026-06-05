@@ -32,6 +32,11 @@ class NetworkConfig:
     subnets: List[str] = field(default_factory=lambda: ["192.168.1.0/24"])
     gateway_ip: str = ""
     gateway_mac: str = ""
+    # Switch SPAN/mirror-port mode: the capture interface is fed a copy of all
+    # subnet traffic, not just this host's. Forces promiscuous capture so other
+    # hosts' unicast is seen. (Capture is promiscuous by default; this makes the
+    # intent explicit and surfaces it in the startup log.)
+    mirror_mode: bool = False
 
 
 @dataclass

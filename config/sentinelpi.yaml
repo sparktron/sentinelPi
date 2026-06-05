@@ -31,6 +31,12 @@ network:
   # If set, any change to this MAC triggers a CRITICAL alert
   gateway_mac: ""   # e.g., "aa:bb:cc:dd:ee:ff"
 
+  # Switch SPAN/mirror-port mode. Enable when this interface is plugged into a
+  # mirror/SPAN port that receives a copy of all subnet traffic (not just this
+  # host's). Forces promiscuous capture so other hosts' unicast is seen.
+  # See docs/configuration_guide.md for switch setup.
+  mirror_mode: false
+
 # =============================================================================
 # TRUSTED DEVICES
 # =============================================================================
