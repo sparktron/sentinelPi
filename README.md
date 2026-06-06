@@ -1,91 +1,282 @@
-# SentinelPi
+<div align="center">
 
-Lightweight defensive network anomaly monitor designed for continuous operation on Raspberry Pi.
+# 🛡️ SentinelPi
 
-SentinelPi passively monitors your home lab or small office network, builds a behavioral baseline over time, and flags suspicious activity with clear, human-readable explanations. It detects unauthorized devices, ARP spoofing, port scanning, beaconing malware, DNS abuse, lateral movement, SSH brute force, and other anomalies.
+### Lightweight defensive network anomaly monitor for the Raspberry Pi
 
-**This is a monitoring and detection tool only.** It contains no offensive capabilities, exploit code, traffic injection, or active retaliation features.
+Passively watch your home lab or small-office LAN, learn what "normal" looks like, and get
+clear, human-readable alerts the moment something deviates — rogue devices, ARP spoofing,
+port scans, C2 beaconing, DNS abuse, lateral movement, SSH brute force, and more.
+
+[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%7C%20Linux-C51A4A?logo=raspberrypi&logoColor=white)](#requirements)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)](#testing)
+[![Defensive only](https://img.shields.io/badge/scope-defensive%20only-blue.svg)](#safety-boundaries)
+
+</div>
+
+<div align="center">
+  <img src="docs/images/dashboard-hero.png" alt="SentinelPi dashboard — summary cards and recent alerts" width="900">
+</div>
+
+---
+
+> **Defensive by design.** SentinelPi is a monitoring and detection tool. It contains **no**
+> offensive capabilities — no exploit code, no traffic injection, no credential harvesting, no
+> MITM. Its optional active-response layer is opt-in, dry-run by default, and human-approval
+> gated. See [Safety boundaries](#safety-boundaries).
+
+## Table of contents
+
+- [Why SentinelPi](#why-sentinelpi)
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Detection capabilities](#detection-capabilities)
+- [Active response (optional)](#active-response-optional)
+- [Whole-network coverage](#whole-network-coverage)
+- [Architecture](#architecture)
+- [Alert severity levels](#alert-severity-levels)
+- [Testing](#testing)
+- [Documentation](#documentation)
+- [Safety boundaries](#safety-boundaries)
+- [License](#license)
+
+## Why SentinelPi
+
+Most home and small-office networks are completely unmonitored. SentinelPi turns a spare
+Raspberry Pi into an always-on sensor that builds a behavioral baseline over days, then flags
+the things that don't fit — without flooding you with noise. Every alert comes with a plain-
+English description, a confidence score, and a recommended next step.
+
+- **Runs for months.** Thread-safe, WAL-mode SQLite, bounded memory, clean systemd shutdown.
+- **Works without root.** `/proc/net` polling and flow ingestion mean packet capture is optional.
+- **Low noise.** Per-detector thresholds, sensitivity profiles, dedup, cooldowns, and quiet hours.
+- **Actionable.** Threat-intel enrichment, device fingerprinting, GeoIP/ASN context on every hit.
 
 ## Features
 
-- **Device Inventory** — Tracks all LAN devices by MAC/IP, detects new and rogue devices
-- **ARP Spoofing Detection** — Monitors for gateway MAC changes and conflicting ARP replies
-- **Port Scan Detection** — Identifies hosts probing many ports or sweeping the subnet
-- **Beacon Detection** — Finds regular outbound connection intervals (C2 check-in patterns)
-- **Connection Monitoring** — Detects spikes, new external destinations, suspicious ports
-- **DNS Anomaly Detection** — Flags DGA domains, DNS tunneling, NXDOMAIN floods
-- **Lateral Movement Detection** — Identifies admin protocol fan-out between internal hosts
-- **Auth Log Monitoring** — SSH brute force, new logins, sudo abuse
-- **Behavioral Baseline** — Learns normal traffic patterns; flags deviations with z-score analysis
-- **Web Dashboard** — Local Flask-based UI with real-time alerts, device inventory, and controls
-- **Alert Management** — Deduplication, cooldowns, severity levels, acknowledgment, muting
-- **Structured Alerting** — Console output, rotating JSON log, optional email/webhook notifications
+**🔍 Detection**
+- **Device inventory** — tracks every LAN device by MAC/IP; flags new and rogue hosts
+- **ARP spoofing** — gateway MAC changes, conflicting replies, reply floods (MITM signature)
+- **Port scans** — vertical scans and subnet sweeps via sliding-window counters
+- **C2 beaconing** — regular outbound intervals detected by coefficient-of-variation
+- **Connection anomalies** — count spikes, new destinations, new listening ports (z-score)
+- **DNS abuse** — DGA domains, DNS tunneling, NXDOMAIN floods, encrypted-DNS (DoH/DoT) bypass
+- **Lateral movement** — admin-protocol fan-out between internal hosts
+- **Auth-log monitoring** — SSH brute force, new logins, sudo abuse
+- **Active-hours & geo** — first connection to a new country, activity outside learned hours
+
+**🧠 Intelligence & enrichment**
+- **Threat-intel feeds** — abuse.ch URLhaus / Feodo Tracker, Spamhaus DROP; cached & refreshed daily
+- **Passive device fingerprinting** — classifies cameras, phones, IoT, NAS, consoles, routers…
+- **GeoIP + ASN reputation** — country and network context attached to external destinations
+- **Behavioral baseline** — Welford online statistics; deviations scored, not hard-coded
+
+**🖥️ Interface & alerting**
+- **Web dashboard** — local dark-themed Flask UI: live alerts, device inventory, suspicious hosts
+- **Alert management** — dedup, cooldowns, severity levels, acknowledge & mute
+- **Structured outputs** — console, rotating JSON log, SQLite, optional email & webhooks
+- **Daily / weekly reports** — rolled-up summaries of what happened on the network
+
+**🌐 Whole-network coverage**
+- **Multi-sensor** — forward sensor alerts to a central collector over **mTLS**; per-sensor views
+- **Router / firewall flow ingest** — conntrack, NetFlow/IPFIX, and pf/iptables `filterlog`
+- **SPAN / mirror-port mode** — see *all* subnet traffic, not just this host's
+
+**🛡️ Optional active response** (opt-in, dry-run by default, approval-gated)
+- Firewall block (iptables/nftables), DNS sinkhole (hosts/Pi-hole/Unbound),
+  ARP re-pin on poisoning, and a generic operator kill-switch — see
+  [Active response](#active-response-optional).
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><b>Full dashboard</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/dashboard.png" alt="Full SentinelPi dashboard"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Device inventory &amp; most-suspicious hosts</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/device-inventory.png" alt="Device inventory and suspicious hosts"></td>
+  </tr>
+</table>
 
 ## Requirements
 
-- Raspberry Pi 4 or newer (or any Debian-based Linux)
-- Python 3.11+
-- Network interface in the monitored subnet
-- Root or `CAP_NET_RAW` for packet capture (optional; proc polling works without root)
+- Raspberry Pi 4 or newer (or any Debian-based Linux host)
+- Python **3.11+**
+- A network interface on the subnet you want to watch
+- Root or `CAP_NET_RAW` for packet capture — **optional**; `/proc` polling and flow ingest
+  work without elevated privileges
 
-## Quick Start
+## Installation
 
-### Development / Testing
+### Production install (Raspberry Pi / Debian)
+
+The installer creates a locked-down `sentinelpi` system user, sets up a virtualenv under
+`/opt/sentinelpi`, grants `CAP_NET_RAW` to the venv Python (so the daemon never runs as root),
+and registers the systemd service.
 
 ```bash
-# Clone and enter the project
+git clone https://github.com/sparktron/sentinelPi-.git
 cd sentinelPi-
 
-# Set up the virtual environment
-bash scripts/setup_venv.sh
-source venv/bin/activate
-
-# Run tests
-python -m pytest tests/ -v
-
-# Check config
-SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main --check-config
-
-# Start monitoring (may need sudo for packet capture)
-SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main
-```
-
-### Production Install (Raspberry Pi)
-
-```bash
 # Install as a systemd service
 sudo bash scripts/install.sh
 
-# Edit configuration
+# Configure for your network (interface, subnet, gateway, trusted devices)
 sudo nano /etc/sentinelpi/sentinelpi.yaml
 
-# Start the service
+# Validate the config, then start
+sudo -u sentinelpi /opt/sentinelpi/venv/bin/python -m sentinelpi.main --check-config
 sudo systemctl start sentinelpi
 sudo systemctl status sentinelpi
 
-# View logs
+# Follow the logs
 sudo journalctl -u sentinelpi -f
+```
 
-# Open dashboard
-# http://localhost:8888/
+Then open the dashboard at **http://localhost:8888/** (see [Usage](#usage) for the access token).
+
+### Development / testing
+
+```bash
+git clone https://github.com/sparktron/sentinelPi-.git
+cd sentinelPi-
+
+# Create the virtual environment and install dependencies
+bash scripts/setup_venv.sh
+source venv/bin/activate
+
+# Run the test suite
+python -m pytest tests/ -v
+
+# Validate a config and start monitoring (sudo only if packet capture is enabled)
+SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main --check-config
+SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main
+```
+
+## Usage
+
+```text
+sentinelpi [--config PATH] [--check-config] [--version]
+
+  -c, --config PATH   Path to the YAML config (or set SENTINELPI_CONFIG)
+      --check-config  Validate configuration and exit
+      --version       Print version and exit
+```
+
+**Running:**
+
+```bash
+# From the config path
+sentinelpi --config /etc/sentinelpi/sentinelpi.yaml
+
+# Or via the environment variable
+SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main
+```
+
+**Accessing the dashboard.** Every dashboard route requires a bearer token. Set a stable one
+under `dashboard.access_token` in your config; if you leave it blank, SentinelPi generates a
+random token per run and prints it to the log on startup:
+
+```
+No dashboard access_token configured — generated a random one for this run:
+    <token>
+Pass it as 'Authorization: Bearer <token>'.
+```
+
+The dashboard binds to `127.0.0.1:8888` by default — keep it on loopback and reach it over an
+SSH tunnel rather than exposing it to the LAN:
+
+```bash
+ssh -L 8888:127.0.0.1:8888 pi@your-pi
+# then browse to http://localhost:8888/
 ```
 
 ## Configuration
 
-The configuration file (`config/sentinelpi.yaml`) controls all behavior. Key settings:
+All behavior is driven by a single YAML file (`config/sentinelpi.yaml`). Every setting ships
+with a safe default — you only configure what differs for your network.
 
-| Section | What to configure |
-|---------|-------------------|
-| `network` | Interface, subnet, gateway IP/MAC |
+| Section | What it controls |
+|---------|------------------|
+| `network` | Interfaces, subnets, gateway IP/MAC, SPAN/mirror mode |
 | `trusted_devices` | Your known devices (suppresses new-device alerts) |
 | `monitoring.sensitivity_profile` | `conservative`, `balanced`, or `aggressive` |
-| `monitoring.packet_capture_enabled` | `true` for full capture, `false` for proc-only (no root) |
-| `dashboard` | Host/port, access token |
-| `notifications` | Email and webhook settings |
-| `thresholds` | Fine-tune individual detector thresholds |
-| `whitelist_*` | IPs, domains, ports to never alert on |
+| `monitoring.packet_capture_enabled` | `true` for full capture, `false` for `/proc`-only (no root) |
+| `dashboard` | Host/port and access token |
+| `notifications` | Email, webhook, and daily/weekly report settings |
+| `threat_intel` | Enable blocklist feeds and matching |
+| `response` | Optional active-response layer (off + dry-run by default) |
+| `multi_sensor` | Collector/sensor mTLS forwarding |
+| `flow_ingest` | conntrack / NetFlow / IPFIX / filterlog ingestion |
+| `thresholds` / `whitelist_*` | Per-detector tuning and never-alert allowlists |
 
-See [docs/configuration_guide.md](docs/configuration_guide.md) for full details.
+Quick start: set `network.interfaces`, `network.subnets`, and `network.gateway_ip`, list your
+`trusted_devices`, then run `sentinelpi --check-config`. Full reference in
+[docs/configuration_guide.md](docs/configuration_guide.md).
+
+## Detection capabilities
+
+| Detector | What it finds | Method |
+|----------|---------------|--------|
+| ARP | Gateway MAC changes, ARP conflicts, reply floods | Rule-based |
+| Port scan | Vertical scans, subnet sweeps | Sliding-window counters |
+| Beacon | Regular outbound intervals (malware C2) | Coefficient of variation |
+| Connection | Count spikes, new destinations, new listening ports | Baseline z-score |
+| DNS | DGA domains, tunneling, NXDOMAIN floods | Entropy + rate analysis |
+| DoH / DoT | Clients bypassing local DNS via encrypted resolvers | Port + resolver match |
+| Lateral movement | Admin-protocol fan-out, new internal connections | Rule + baseline |
+| Auth log | SSH brute force, new logins, sudo abuse | Pattern matching |
+| Threat intel | Connections to known-bad IPs/domains | Blocklist match |
+| GeoIP / ASN | First connection to a new country; bad-reputation networks | Per-host baseline |
+| Active hours | Activity outside a host's learned schedule | Time-window baseline |
+
+## Active response (optional)
+
+SentinelPi can optionally *act* on the worst alerts — but it is built so it never surprises
+you. Responders only ever **describe** an action; a single `ResponderManager` decides whether
+it runs, through a layered safety ladder:
+
+```
+master off  (response.enabled: false)   →  nothing is planned          ← default
+dry-run     (dry_run: true)              →  decide + log, never execute  ← default when enabled
+armed       (require_approval: true)     →  hold as PENDING for one-click human approval
+trusted     (auto_execute_categories)    →  fire automatically for explicitly listed categories
+```
+
+Available responders (all off by default, each with its own guardrails):
+
+| Responder | Action | Guardrails |
+|-----------|--------|------------|
+| Firewall | DROP a known-bad external IP (iptables/nftables) | Never blocks private/loopback/whitelisted IPs |
+| DNS sinkhole | Block a malicious domain (hosts / Pi-hole / Unbound) | Never sinkholes a whitelisted domain |
+| ARP restore | Re-pin the configured gateway MAC on poisoning | Requires `gateway_ip` **and** `gateway_mac` |
+| Kill switch | Run an operator-supplied command on compromise | No command + no categories = never fires |
+
+The honest default is to watch decisions in dry-run for days, then arm with a human in the
+loop before trusting any category to fire on its own.
+
+## Whole-network coverage
+
+Go beyond a single host:
+
+- **Multi-sensor.** Run SentinelPi on several segments and forward alerts to a central
+  collector over **mutual-TLS**. The dashboard offers per-sensor views.
+- **Router / firewall flow ingest.** Feed `conntrack`, **NetFlow/IPFIX**, and pf/iptables
+  `filterlog` exports so SentinelPi sees flows it could never sniff directly.
+- **SPAN / mirror-port mode.** Plug the Pi into a switch mirror port and set
+  `network.mirror_mode: true` to analyze *all* subnet traffic in promiscuous mode.
 
 ## Architecture
 
@@ -93,67 +284,54 @@ See [docs/configuration_guide.md](docs/configuration_guide.md) for full details.
                     ┌─────────────────────┐
                     │   Packet Capture    │ (scapy, optional)
                     │   /proc Readers     │ (no root needed)
+                    │   Flow Ingest       │ (conntrack/NetFlow/filterlog)
                     │   Auth Log Tailer   │
                     └─────────┬───────────┘
                               │ events
                     ┌─────────▼───────────┐
-                    │     Detectors       │
-                    │  ARP │ Port Scan    │
-                    │  Beacon │ DNS       │
-                    │  Connection │ Auth  │
-                    │  Lateral Movement   │
+                    │      Detectors      │  ARP · Port Scan · Beacon
+                    │  + Baseline Engine  │  Connection · DNS · DoH
+                    │  + Threat Intel     │  Lateral · Auth · Geo/ASN
                     └─────────┬───────────┘
                               │ alerts
               ┌───────────────▼────────────────┐
               │         Alert Manager          │
-              │  dedup │ cooldown │ routing    │
-              └──┬──────────┬──────────┬───────┘
-                 │          │          │
-          ┌──────▼──┐  ┌────▼───┐  ┌───▼────┐
-          │ Console │  │ SQLite │  │ Email  │
-          │  JSON   │  │   DB   │  │Webhook │
-          └─────────┘  └────────┘  └────────┘
-                          │
-                    ┌─────▼──────┐
-                    │  Flask UI  │
-                    │ Dashboard  │
-                    └────────────┘
+              │   dedup · cooldown · routing   │
+              └──┬───────┬───────┬───────┬─────┘
+                 │       │       │       │
+          ┌──────▼─┐ ┌───▼──┐ ┌──▼───┐ ┌─▼──────────┐
+          │Console │ │SQLite│ │Email │ │ Responder  │
+          │ JSON   │ │  DB  │ │ Hook │ │  Manager   │ (gated)
+          └────────┘ └──┬───┘ └──────┘ └────────────┘
+                        │
+                  ┌─────▼──────┐
+                  │  Flask UI  │  ← + collector (mTLS) for multi-sensor
+                  │ Dashboard  │
+                  └────────────┘
 ```
-
-### Modules
 
 | Module | Purpose |
 |--------|---------|
-| `capture/` | Packet sniffing (scapy) and `/proc/net` polling |
+| `capture/` | Packet sniffing (scapy), `/proc/net` polling, flow ingest, honeypot |
 | `detectors/` | Rule-based and baseline-deviation anomaly detectors |
-| `inventory/` | Device tracking, MAC/IP correlation |
+| `inventory/` | Device tracking, classification, DHCP-lease correlation |
 | `baseline/` | Welford online statistics, behavioral baseline |
-| `alerts/` | Deduplication, cooldown, notification routing |
-| `storage/` | SQLite persistence (WAL mode, thread-safe) |
-| `ui/` | Flask web dashboard |
-| `config/` | YAML configuration loading and validation |
-| `utils/` | Network helpers, GeoIP lookup |
+| `intel/` | Threat-feed download, caching, and matching |
+| `alerts/` | Dedup, cooldown, correlation, notification routing |
+| `responders/` | Optional, gated active-response actions |
+| `storage/` | SQLite persistence (WAL mode, thread-safe, migrations) |
+| `ui/` | Flask web dashboard + multi-sensor collector |
+| `config/` | YAML loading and validation |
+| `utils/` | Network helpers, GeoIP/ASN, timezone-aware clock |
 
-## Detection Capabilities
-
-| Detector | What It Finds | Method |
-|----------|---------------|--------|
-| ARP | Gateway MAC changes, ARP conflicts, reply floods | Rule-based |
-| Port Scan | Vertical scans, host sweeps | Sliding window counters |
-| Beacon | Regular outbound intervals (malware C2) | Coefficient of variation |
-| Connection | Count spikes, new destinations, new listening ports | Baseline z-score |
-| DNS | DGA domains, tunneling, NXDOMAIN floods | Entropy + rate analysis |
-| Lateral Movement | Admin protocol fan-out, new internal connections | Rule + baseline |
-| Auth Log | SSH brute force, new logins, sudo abuse | Pattern matching |
-
-## Alert Severity Levels
+## Alert severity levels
 
 | Level | Meaning | Example |
 |-------|---------|---------|
-| `info` | Informational, no action needed | New known domain queried |
-| `low` | Minor anomaly, worth noting | New device from known vendor |
-| `medium` | Suspicious, investigate when convenient | New SSH login from unseen IP |
-| `high` | Likely malicious, investigate promptly | Port scan detected, ARP conflict |
+| `info` | Informational, no action needed | Client using encrypted DNS |
+| `low` | Minor anomaly, worth noting | New device from a known vendor |
+| `medium` | Suspicious, investigate when convenient | New SSH login from an unseen IP |
+| `high` | Likely malicious, investigate promptly | Port scan; connection to known-bad IP |
 | `critical` | Active threat indicator, act now | Gateway MAC changed (ARP poisoning) |
 
 ## Testing
@@ -166,14 +344,14 @@ python -m pytest tests/ -v
 python -m pytest tests/ --cov=sentinelpi --cov-report=term-missing
 ```
 
-Test fixtures simulate:
-- Normal home network traffic
-- Port scan (100+ ports in 30 seconds)
+Fixtures simulate real attack traffic so detectors are tested end-to-end:
+
+- Normal home-network traffic (baseline)
+- Port scan (100+ ports in 30s)
 - Beaconing malware (regular 60s intervals)
 - ARP spoofing (gateway MAC change)
-- SSH brute force (50 failures in 100 seconds)
-- DNS tunneling (long encoded subdomains)
-- DGA domain generation (high-entropy NXDOMAIN)
+- SSH brute force (50 failures in 100s)
+- DNS tunneling (long encoded subdomains) and DGA NXDOMAIN floods
 
 ## Documentation
 
@@ -182,19 +360,24 @@ Test fixtures simulate:
 - [systemd Setup Guide](docs/systemd_setup.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Security Considerations](docs/security_considerations.md)
+- [Feature Roadmap](docs/FEATURE_ROADMAP.md)
 
-## Safety Boundaries
+## Safety boundaries
 
-SentinelPi is a **defensive monitoring tool**. It does NOT:
+SentinelPi is a **defensive monitoring tool**. It does **not**:
 
 - Inject, modify, or forge network traffic
 - Perform active exploitation or vulnerability scanning
 - Harvest credentials or intercept encrypted traffic
 - Execute man-in-the-middle attacks
-- Auto-block hosts or modify firewall rules
 - Provide remote shell access or persistence mechanisms
-- Include any offensive security capabilities
+- Include any offensive security capability
+
+The optional [active-response](#active-response-optional) layer is **off and in dry-run by
+default**, refuses to touch private/loopback/whitelisted targets, and holds risky actions for
+explicit human approval. It exists to *contain* a confirmed threat (block a C2 IP, sinkhole a
+malicious domain, re-pin your real gateway MAC) — never to attack.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+[MIT](LICENSE) © SentinelPi Project
