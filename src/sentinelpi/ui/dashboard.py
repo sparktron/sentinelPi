@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from ..inventory.device_tracker import DeviceTracker
     from ..baseline.engine import BaselineEngine
     from ..alerts.manager import AlertManager
+    from ..utils.watchdog import OperationalWatchdog
 
 
 def _bounded_int(raw: Optional[str], default: int, lo: int, hi: int) -> int:
@@ -97,6 +98,7 @@ def create_app(
     baseline: "BaselineEngine",
     alert_manager: "AlertManager",
     responder_manager=None,
+    watchdog: Optional["OperationalWatchdog"] = None,
 ) -> Optional["Flask"]:
     """
     Create and configure the Flask application.
@@ -228,6 +230,7 @@ def create_app(
             "device_count": device_tracker.get_device_count(),
             "baseline": baseline_summary,
             "alert_manager": manager_stats,
+            "watchdog": watchdog.get_status() if watchdog is not None else None,
         })
 
     @app.route("/api/alerts")

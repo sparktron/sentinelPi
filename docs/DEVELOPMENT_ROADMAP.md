@@ -17,8 +17,10 @@ important hardening or usability work.
 ## Findings To Fix
 
 Status update 2026-06-10: Phase 1 items 1, 2, 3, 5, and 6 are complete with regression tests.
-Phase 2 items 4 and 7 are also complete. Next implementation pass should start with watchdog /
-self-monitoring, then continue into CI hardening and incident UX.
+Phase 2 items 4 and 7 are also complete. The first watchdog slice is also shipped: dead worker
+threads, high capture-queue usage, low disk space, and `/api/status` health exposure. Next
+implementation pass should continue watchdog follow-ups (stalled capture and threat-feed refresh
+health), then move into CI hardening and incident UX.
 
 ### Critical
 
@@ -161,8 +163,9 @@ Exit criteria:
   refresh failures, and low disk space.
 - Expose health status in `/api/status` and daily reports.
 
-Status: notifier lifecycle management and DNS cooldown pruning are complete as of 2026-06-10.
-Watchdog/self-monitoring remains open.
+Status: notifier lifecycle management, DNS cooldown pruning, dead-thread alerts, queue-saturation
+alerts, low-disk alerts, and `/api/status` watchdog exposure are complete as of 2026-06-10.
+Stalled-capture timing, threat-feed refresh health, and daily-report health summaries remain open.
 
 Exit criteria:
 - Shutdown tests prove no managed service is skipped.
@@ -201,8 +204,8 @@ Exit criteria:
 
 ## Proposed New Features
 
-- **Operational watchdog:** raise `SYSTEM` alerts when capture stalls, queues fill, workers die, disk
-  is low, or threat-intel feeds stop refreshing.
+- **Operational watchdog:** partially shipped for queue saturation, worker death, low disk, and
+  `/api/status`; capture-stall and threat-intel refresh health remain open.
 - **Host investigation view:** a single page per device with identity, suspicion trend, active hours,
   top peers, top DNS domains, open ports, and recent responder actions.
 - **Incident timeline engine:** combine related alerts into one narrative with first-seen, escalation,
@@ -217,7 +220,7 @@ Exit criteria:
 
 ## Validation Performed
 
-- `python -m pytest -q` passed: 281 tests.
+- `python -m pytest -q` passed: 292 tests after the Phase 1/early Phase 2 fixes.
 - Manual invalid-config check proved `--check-config` currently accepts invalid values.
 - Static review covered core runtime modules, tests, CI, sample config, README, and existing docs.
 

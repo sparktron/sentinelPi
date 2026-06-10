@@ -202,8 +202,9 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
 ## Phase 6 — Trust, safety, and operability
 - **Tamper-evident alert log** (hash-chained) so an attacker who lands on the Pi can't silently
   delete evidence; optionally ship alerts off-box immediately.
-- **Self-monitoring / watchdog:** detect if capture stopped, a thread died, or disk is full, and
-  alert on *its own* degradation (a security tool that silently dies is worse than none).
+- ✅ **Self-monitoring / watchdog.** _Partially shipped: raises SYSTEM alerts for dead managed
+  worker threads, high capture-queue usage, and low disk space, and exposes the latest snapshot
+  in `/api/status`. Open: stalled-capture timing and threat-feed refresh health._
 - **Config validation + `--check` mode** that lints config and tests notifiers/responders in dry-run.
   _Partially shipped: `--check-config` now validates operator-facing values (CIDRs, ports,
   severities, responder backends, sensitivity profiles) and exits non-zero on invalid config.
@@ -239,10 +240,9 @@ should follow the project's conventions (opt-in config, dry-run-safe, tests alon
    registry. Start with ntfy (simplest: HTTP POST, action buttons) before Telegram's bot API.
    Scope: new notifier + config block + delivery of the action id + tests.
 
-2. **Self-monitoring / watchdog.** A security tool that silently dies is worse than none. Detect
-   stalled capture (no events in N seconds), a dead worker thread, threat-feed refresh failures, or
-   low disk, and raise a `SYSTEM`-category alert on SentinelPi's *own* degradation. Hook into the
-   event router / main loop in `main.py`; emit through the normal alert pipeline.
+2. **Watchdog follow-ups.** The first watchdog slice is shipped (dead worker threads,
+   high capture queue, low disk, `/api/status`). Add stalled-capture timing and
+   threat-feed refresh health next.
 
 3. **Single-host incident engine (Phase 4 sequence/correlation).** The cross-sensor correlator
    exists; this is the per-host story: chain "new device → port scan → admin connection" into one

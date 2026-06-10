@@ -132,6 +132,12 @@ monitoring:
   # Increase on noisy networks; 24h is a good default
   baseline_learning_hours: 24
 
+  # Self-monitoring: raise SYSTEM alerts if SentinelPi itself is degraded.
+  self_monitoring_enabled: true
+  self_monitoring_interval_seconds: 60
+  self_monitoring_queue_warn_ratio: 0.80
+  self_monitoring_disk_free_min_mb: 512
+
 # =============================================================================
 # ALERT THRESHOLDS
 # =============================================================================

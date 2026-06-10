@@ -70,6 +70,22 @@ monitoring:
   file_integrity_enabled: false    # Optional config file hashing
   geo_enabled: false               # Requires GeoLite2 database
   active_discovery_enabled: false  # Low-rate ARP ping (off by default)
+  self_monitoring_enabled: true    # SYSTEM alerts if SentinelPi itself degrades
+```
+
+### Self-Monitoring Watchdog
+
+The watchdog raises `SYSTEM` alerts when SentinelPi's own runtime health degrades:
+managed worker threads stop, the capture queue approaches capacity, or the database
+volume falls below the configured free-space floor. The latest snapshot is also
+returned from `/api/status`.
+
+```yaml
+monitoring:
+  self_monitoring_enabled: true
+  self_monitoring_interval_seconds: 60
+  self_monitoring_queue_warn_ratio: 0.80
+  self_monitoring_disk_free_min_mb: 512
 ```
 
 ## Dashboard

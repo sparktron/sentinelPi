@@ -32,6 +32,7 @@ def test_validate_config_rejects_invalid_ports_and_enums():
     config = Config()
     config.dashboard.port = "nope"
     config.monitoring.sensitivity_profile = "maximum"
+    config.monitoring.self_monitoring_queue_warn_ratio = 1.5
     config.notifications.webhook_min_severity = "urgent"
     config.response.firewall_backend = "pf"
 
@@ -39,6 +40,7 @@ def test_validate_config_rejects_invalid_ports_and_enums():
 
     assert "dashboard.port" in paths
     assert "monitoring.sensitivity_profile" in paths
+    assert "monitoring.self_monitoring_queue_warn_ratio" in paths
     assert "notifications.webhook_min_severity" in paths
     assert "response.firewall_backend" in paths
 

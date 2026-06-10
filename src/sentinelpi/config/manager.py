@@ -191,6 +191,12 @@ class MonitoringConfig:
     # Baseline learning period before anomaly detection activates
     baseline_learning_hours: int = 24
 
+    # Self-monitoring: emit SYSTEM alerts when SentinelPi itself is degraded.
+    self_monitoring_enabled: bool = True
+    self_monitoring_interval_seconds: int = 60
+    self_monitoring_queue_warn_ratio: float = 0.80
+    self_monitoring_disk_free_min_mb: int = 512
+
 
 @dataclass
 class ReportingConfig:
@@ -569,6 +575,18 @@ def validate_config(config: Config) -> List[ConfigIssue]:
                            config.monitoring.active_discovery_interval_seconds)
     check_non_negative_int("monitoring.baseline_learning_hours", config.monitoring.baseline_learning_hours)
     check_non_negative_int("monitoring.active_hours_min_known", config.monitoring.active_hours_min_known)
+    check_non_negative_int("monitoring.self_monitoring_interval_seconds",
+                           config.monitoring.self_monitoring_interval_seconds)
+    check_positive_number("monitoring.self_monitoring_queue_warn_ratio",
+                          config.monitoring.self_monitoring_queue_warn_ratio)
+    if (
+        isinstance(config.monitoring.self_monitoring_queue_warn_ratio, bool)
+        or not isinstance(config.monitoring.self_monitoring_queue_warn_ratio, (int, float))
+        or config.monitoring.self_monitoring_queue_warn_ratio > 1
+    ):
+        add("monitoring.self_monitoring_queue_warn_ratio", "must be a number from greater than 0 through 1")
+    check_non_negative_int("monitoring.self_monitoring_disk_free_min_mb",
+                           config.monitoring.self_monitoring_disk_free_min_mb)
     for path, hour in (
         ("monitoring.quiet_hours_start", config.monitoring.quiet_hours_start),
         ("monitoring.quiet_hours_end", config.monitoring.quiet_hours_end),

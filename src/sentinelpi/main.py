@@ -70,6 +70,7 @@ from .capture.flow_ingest import ConntrackFlowSource, NetFlowCollector, Filterlo
 from .capture.honeypot import HoneypotService
 from .utils.geo import init_geo
 from .utils.asn import init_asn
+from .utils.watchdog import OperationalWatchdog
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +247,7 @@ class SentinelPi:
 
         # Dashboard
         self._dashboard_server = None
+        self._watchdog: Optional[OperationalWatchdog] = None
 
     def _log_capabilities(self) -> None:
         """
@@ -543,6 +545,7 @@ class SentinelPi:
             baseline=self._baseline,
             alert_manager=self._alert_manager,
             responder_manager=self._responder_manager,
+            watchdog=self._watchdog,
         )
         self._dashboard_server = DashboardServer(app, self.config)
         self._dashboard_server.start()
@@ -556,10 +559,25 @@ class SentinelPi:
         last_vacuum = time.time()
         last_purge = time.time()
         last_stats_log = time.time()
+        last_watchdog = 0.0
         vacuum_interval = self.config.storage.vacuum_interval_seconds
+        watchdog_interval = max(1, self.config.monitoring.self_monitoring_interval_seconds)
 
         while not self._stop_event.is_set():
             now = time.time()
+
+            if (
+                self.config.monitoring.self_monitoring_enabled
+                and self._watchdog is not None
+                and now - last_watchdog >= watchdog_interval
+            ):
+                try:
+                    alerts = self._watchdog.check()
+                    if alerts:
+                        self._alert_manager.process(alerts)
+                except Exception as exc:
+                    logger.error("Watchdog check failed: %s", exc, exc_info=True)
+                last_watchdog = now
 
             # Purge old records every 6 hours
             if now - last_purge > 21600:
@@ -609,6 +627,7 @@ class SentinelPi:
         self._start_polling_threads()
 
         logger.info("Starting web dashboard...")
+        self._watchdog = OperationalWatchdog(self.config, self._capture_queue, self._threads)
         self._start_dashboard()
 
         self._start_threat_intel()
