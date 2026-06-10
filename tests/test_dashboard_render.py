@@ -55,3 +55,43 @@ def test_index_redirects_to_login_on_session_expiry(authed_client):
     assert "apiFetch" in html
     assert "window.location = '/login'" in html
     assert "401" in html
+
+
+def test_index_includes_incident_timeline_wiring(authed_client):
+    client, headers = authed_client
+    html = client.get("/", headers=headers).get_data(as_text=True)
+    # The incident timeline renderer + the field it reads from the alert dict.
+    assert "incidentTimeline" in html
+    assert "a.timeline" in html
+    assert "incident-timeline" in html
+
+
+def test_alerts_api_exposes_incident_timeline(authed_client, db):
+    from datetime import timezone
+    from sentinelpi.models import Alert, AlertCategory, Severity
+    from sentinelpi.utils import clock
+
+    client, headers = authed_client
+    timeline = [
+        {"timestamp": clock.now().isoformat(), "category": "new_device",
+         "severity": "medium", "title": "New device 10.0.0.9",
+         "affected_host": "10.0.0.9", "related_host": None},
+        {"timestamp": clock.now().isoformat(), "category": "lateral_movement",
+         "severity": "high", "title": "Lateral movement from 10.0.0.9",
+         "affected_host": "10.0.0.9", "related_host": "10.0.0.20"},
+    ]
+    db.save_alert(Alert(
+        severity=Severity.HIGH,
+        category=AlertCategory.INCIDENT,
+        affected_host="10.0.0.9",
+        title="Possible intrusion sequence: 10.0.0.9",
+        description="ordered sequence",
+        extra={"actor": "10.0.0.9", "timeline": timeline},
+    ))
+
+    resp = client.get("/api/alerts?hours=24&limit=50", headers=headers)
+    assert resp.status_code == 200
+    incident = next(a for a in resp.get_json() if a["category"] == "incident")
+    assert incident["timeline"] is not None
+    assert len(incident["timeline"]) == 2
+    assert incident["timeline"][1]["category"] == "lateral_movement"

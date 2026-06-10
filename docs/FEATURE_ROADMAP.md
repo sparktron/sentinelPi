@@ -246,9 +246,10 @@ should follow the project's conventions (opt-in config, dry-run-safe, tests alon
    the moment it goes PENDING; gated by `notifications.ntfy_enabled`. Tests in `test_notifiers.py`.
    _Open follow-up:_ Telegram bot-API variant (different action-button mechanism).
 
-2. **Incident timeline UI.** The single-host incident engine now emits a structured timeline in
-   `incident.extra["timeline"]`; next, surface that evidence clearly in the dashboard instead of
-   showing INCIDENT alerts as plain rows.
+2. ✅ **Incident timeline UI.** _Shipped (2026-06-10):_ `_alert_to_dict` exposes
+   `extra["timeline"]`, and the alerts table renders it inline as a collapsible
+   `<details>` "Incident timeline" with the ordered events (time, severity, category, title) for
+   any alert that carries one. Render + API tests in `test_dashboard_render.py`.
 
 3. **Mypy readiness.** Install or configure third-party stubs, tighten the existing annotation
    gaps, and only then add a mypy CI gate.

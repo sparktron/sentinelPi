@@ -424,6 +424,9 @@ def _alert_to_dict(alert) -> dict:
         "status": alert.status.value,
         "enrichment": alert.extra.get("enrichment"),
         "sensor": alert.extra.get("sensor", "local"),
+        # Single-host incident engine attaches an ordered event timeline; the
+        # dashboard renders it inline so an INCIDENT reads as a story, not a row.
+        "timeline": alert.extra.get("timeline"),
     }
 
 
