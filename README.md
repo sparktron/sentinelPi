@@ -89,6 +89,8 @@ English description, a confidence score, and a recommended next step.
 - **Multi-sensor** — forward sensor alerts to a central collector over **mTLS**; per-sensor views
 - **Router / firewall flow ingest** — conntrack, NetFlow/IPFIX, and pf/iptables `filterlog`
 - **SPAN / mirror-port mode** — see *all* subnet traffic, not just this host's
+- **Incident correlation** — optional INCIDENT alerts for cross-sensor breadth, multi-target sweeps,
+  and single-host sequences like new device -> port scan -> lateral movement
 
 **🛡️ Optional active response** (opt-in, dry-run by default, approval-gated)
 - Firewall block (iptables/nftables), DNS sinkhole (hosts/Pi-hole/Unbound),

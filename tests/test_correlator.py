@@ -53,9 +53,66 @@ def test_incident_across_sensors(correlator):
 def test_incident_across_targets(correlator):
     inc = None
     for i in range(5):  # 5 distinct targets, single sensor
-        inc = correlator.observe(_alert(target=f"10.0.0.{i}", sensor="pi-a"))
+        inc = correlator.observe(_alert(actor=f"10.0.0.{i}", target="192.168.1.66", sensor="pi-a"))
     assert inc is not None
     assert inc.extra["target_count"] == 5
+
+
+def test_single_host_sequence_incident(config):
+    config.correlation.enabled = True
+    config.correlation.window_seconds = 300
+    config.correlation.min_sensors = 99
+    config.correlation.min_targets = 99
+    corr = IncidentCorrelator(config)
+
+    assert corr.observe(_alert(category=AlertCategory.NEW_DEVICE, actor="192.168.1.66")) is None
+    assert corr.observe(_alert(category=AlertCategory.PORT_SCAN, actor="LAN", target="192.168.1.66")) is None
+    incident = corr.observe(
+        _alert(category=AlertCategory.LATERAL_MOVEMENT, actor="192.168.1.10", target="192.168.1.66")
+    )
+
+    assert incident is not None
+    assert incident.category == AlertCategory.INCIDENT
+    assert incident.affected_host == "192.168.1.66"
+    assert incident.extra["sequence"] == ["new_device", "port_scan", "lateral_movement"]
+    assert [event["category"] for event in incident.extra["timeline"]] == incident.extra["sequence"]
+    assert incident.extra["timeline"][1]["affected_host"] == "LAN"
+    assert incident.extra["timeline"][1]["related_host"] == "192.168.1.66"
+
+
+def test_single_host_sequence_ignores_unrelated_noise(config):
+    config.correlation.enabled = True
+    config.correlation.window_seconds = 300
+    config.correlation.min_sensors = 99
+    config.correlation.min_targets = 99
+    corr = IncidentCorrelator(config)
+
+    assert corr.observe(_alert(category=AlertCategory.NEW_DEVICE, actor="192.168.1.66")) is None
+    assert corr.observe(_alert(category=AlertCategory.BEACON, actor="192.168.1.66")) is None
+    assert corr.observe(_alert(category=AlertCategory.PORT_SCAN, actor="LAN", target="192.168.1.66")) is None
+    incident = corr.observe(
+        _alert(category=AlertCategory.LATERAL_MOVEMENT, actor="192.168.1.10", target="192.168.1.66")
+    )
+
+    assert incident is not None
+    assert incident.extra["sequence"] == ["new_device", "port_scan", "lateral_movement"]
+
+
+def test_single_host_sequence_requires_order(config):
+    config.correlation.enabled = True
+    config.correlation.window_seconds = 300
+    config.correlation.min_sensors = 99
+    config.correlation.min_targets = 99
+    corr = IncidentCorrelator(config)
+
+    assert corr.observe(_alert(category=AlertCategory.PORT_SCAN, actor="LAN", target="192.168.1.66")) is None
+    assert corr.observe(_alert(category=AlertCategory.NEW_DEVICE, actor="192.168.1.66")) is None
+    assert (
+        corr.observe(
+            _alert(category=AlertCategory.LATERAL_MOVEMENT, actor="192.168.1.10", target="192.168.1.66")
+        )
+        is None
+    )
 
 
 def test_incident_cooldown(correlator):

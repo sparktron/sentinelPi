@@ -169,7 +169,8 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
     (typical ports/bytes/peer-set) are follow-ups.
 - **Sequence/correlation engine.** Turn related alerts into **incidents** (e.g. new device → port
   scan → admin connection = "possible intrusion in progress") with a single timeline, instead of N
-  independent alerts. This is the highest-leverage UX + accuracy win.
+  independent alerts. _Shipped (2026-06-10): ordered single-host new-device → port-scan →
+  lateral-movement chains now raise INCIDENT alerts with a structured `extra.timeline`._
 - **Optional ML anomaly scoring** (IsolationForest / simple autoencoder) on the feature vectors you
   already compute, as a *secondary* signal that boosts confidence — never the sole trigger.
 - **Adaptive thresholds** that learn per-network noise floors instead of static `sensitivity` tiers.
@@ -220,8 +221,8 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
 The original "biggest protector payoff for least work" slice — status as of 2026-06-06:
 
 1. ✅ **Threat-intel blocklist matching** (Phase 1) — shipped.
-2. ✅ **Cross-sensor incident correlation** (Phase 3) — shipped (`alerts/correlator.py`). The
-   *single-host* alert-chain → incident engine (Phase 4) is still open.
+2. ✅ **Incident correlation** — cross-sensor breadth/multi-target incidents (Phase 3) and the
+   single-host alert-chain engine (Phase 4) are shipped in `alerts/correlator.py`.
 3. ✅ **Responder framework + DNS sinkhole/quarantine, dry-run by default** (Phase 2) — shipped,
    now with a dashboard approval panel.
 4. **Telegram/ntfy actionable notifier** (Phase 5) — still the best next step (see below).
@@ -240,10 +241,9 @@ should follow the project's conventions (opt-in config, dry-run-safe, tests alon
    registry. Start with ntfy (simplest: HTTP POST, action buttons) before Telegram's bot API.
    Scope: new notifier + config block + delivery of the action id + tests.
 
-2. **Single-host incident engine (Phase 4 sequence/correlation).** The cross-sensor correlator
-   exists; this is the per-host story: chain "new device → port scan → admin connection" into one
-   `INCIDENT` with a timeline instead of N alerts. Likely a sibling to `alerts/correlator.py`
-   keyed on actor + ordered alert categories within a window.
+2. **Incident timeline UI.** The single-host incident engine now emits a structured timeline in
+   `incident.extra["timeline"]`; next, surface that evidence clearly in the dashboard instead of
+   showing INCIDENT alerts as plain rows.
 
 3. **Mypy readiness.** Install or configure third-party stubs, tighten the existing annotation
    gaps, and only then add a mypy CI gate.

@@ -20,8 +20,9 @@ Status update 2026-06-10: Phase 1 items 1, 2, 3, 5, and 6 are complete with regr
 Phase 2 items 4 and 7 are also complete. The watchdog slice is shipped: dead worker threads,
 stale packet/flow event streams, threat-intel refresh failures/staleness, high capture-queue usage,
 low disk space, and `/api/status` health exposure. CI now runs compile checks, ruff, and
-coverage-enabled pytest. Next implementation pass should move into incident UX, then mypy
-readiness.
+coverage-enabled pytest. The first incident-UX slice is shipped: ordered single-host
+new-device -> port-scan -> lateral-movement chains now raise INCIDENT alerts with timelines.
+Next implementation pass should move into incident timeline display, then mypy readiness.
 
 ### Critical
 
@@ -179,8 +180,10 @@ Exit criteria:
 
 ### Phase 3: Detection Quality And Incident UX
 
-- Build the single-host incident engine: chain alerts such as new device -> port scan -> lateral
-  movement into one incident timeline.
+- ✅ Build the single-host incident engine: chain alerts such as new device -> port scan -> lateral
+  movement into one incident timeline. _Shipped (2026-06-10): `IncidentCorrelator` now detects
+  ordered single-host sequences under the existing `correlation.enabled` gate and stores a structured
+  timeline in `incident.extra["timeline"]`._
 - Extend per-host profiles beyond active hours: usual peer set, destination ports, byte ranges, and
   protocol mix.
 - Add adaptive thresholds per host/network so noisy networks can settle without global sensitivity
@@ -189,7 +192,8 @@ Exit criteria:
   confidence was computed.
 
 Exit criteria:
-- Incident alerts reduce duplicate alert noise while preserving raw alerts.
+- Incident alerts reduce duplicate alert noise while preserving raw alerts. _Partially met for the
+  single-host sequence path; dashboard timeline display remains open._
 - Per-host profile tables are migrated and restart-safe.
 - Dashboard can show incident timeline and contributing evidence.
 

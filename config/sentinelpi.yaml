@@ -343,9 +343,9 @@ cluster:
 # =============================================================================
 # CORRELATION  (Phase 3 — turn alert noise into incidents)
 # =============================================================================
-# Group an actor's alerts seen across multiple sensors, or against many targets,
-# within a time window into one escalated INCIDENT alert. Most useful on a
-# collector that ingests every sensor's alerts.
+# Group an actor's alerts seen across multiple sensors, against many targets, or
+# through an ordered single-host sequence (new device -> port scan -> lateral
+# movement) within a time window into one escalated INCIDENT alert.
 correlation:
   enabled: false
   window_seconds: 300

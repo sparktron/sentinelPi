@@ -18,7 +18,7 @@ import logging
 import threading
 from collections import defaultdict, deque
 from datetime import timedelta
-from typing import Deque, Dict, Optional, Tuple
+from typing import Deque, Dict, Iterable, NamedTuple, Optional
 
 from ..models import Alert, AlertCategory, Severity
 from ..utils import clock
@@ -26,14 +26,30 @@ from ..utils import clock
 logger = logging.getLogger(__name__)
 
 
+class _CorrelationEvent(NamedTuple):
+    timestamp: object
+    sensor: str
+    target: str
+    category: str
+    severity: str
+    title: str
+    affected_host: str
+    related_host: str
+
+
 class IncidentCorrelator:
     """Sliding-window correlation of alerts by actor across sensors/targets."""
+
+    _SINGLE_HOST_SEQUENCE = (
+        AlertCategory.NEW_DEVICE.value,
+        AlertCategory.PORT_SCAN.value,
+        AlertCategory.LATERAL_MOVEMENT.value,
+    )
 
     def __init__(self, config) -> None:
         self.config = config.correlation
         self._lock = threading.Lock()
-        # actor -> deque of (timestamp, sensor, target, category_value)
-        self._events: Dict[str, Deque[Tuple[object, str, str, str]]] = defaultdict(
+        self._events: Dict[str, Deque[_CorrelationEvent]] = defaultdict(
             lambda: deque(maxlen=500)
         )
         # actor -> last incident time (cooldown)
@@ -47,39 +63,83 @@ class IncidentCorrelator:
         """
         if alert.category == AlertCategory.INCIDENT:
             return None
-        actor = alert.affected_host or alert.related_host
+        actor = self._actor_for_alert(alert)
         if not actor:
             return None
 
         sensor = str(alert.extra.get("sensor", "local"))
-        target = alert.related_host if alert.related_host and alert.related_host != actor else ""
+        target = self._target_for_alert(alert, actor)
         now = clock.now()
         cutoff = now - timedelta(seconds=self.config.window_seconds)
 
         with self._lock:
             events = self._events[actor]
-            events.append((now, sensor, target, alert.category.value))
+            events.append(
+                _CorrelationEvent(
+                    timestamp=now,
+                    sensor=sensor,
+                    target=target,
+                    category=alert.category.value,
+                    severity=alert.severity.value,
+                    title=alert.title,
+                    affected_host=alert.affected_host,
+                    related_host=alert.related_host,
+                )
+            )
             # Prune outside the window.
-            while events and events[0][0] < cutoff:
+            while events and events[0].timestamp < cutoff:
                 events.popleft()
 
-            sensors = {e[1] for e in events}
-            targets = {e[2] for e in events if e[2]}
-            categories = {e[3] for e in events}
+            sensors = {e.sensor for e in events}
+            targets = {e.target for e in events if e.target}
+            categories = {e.category for e in events}
 
             triggered = (
                 len(sensors) >= self.config.min_sensors
                 or len(targets) >= self.config.min_targets
             )
-            if not triggered:
+            sequence = self._matched_single_host_sequence(events)
+            if not triggered and not sequence:
                 return None
 
-            last = self._last_incident.get(actor)
-            if last is not None and (now - last).total_seconds() < self.config.cooldown_seconds:
+            if self._is_on_cooldown(actor, now):
                 return None
             self._last_incident[actor] = now
 
+            if sequence and not triggered:
+                return self._build_sequence_incident(actor, sequence)
             return self._build_incident(actor, sensors, targets, categories, len(events))
+
+    def _is_on_cooldown(self, actor: str, now) -> bool:
+        last = self._last_incident.get(actor)
+        return last is not None and (now - last).total_seconds() < self.config.cooldown_seconds
+
+    def _actor_for_alert(self, alert: Alert) -> str:
+        if alert.category in (AlertCategory.PORT_SCAN, AlertCategory.LATERAL_MOVEMENT):
+            return alert.related_host or alert.affected_host
+        if alert.category == AlertCategory.AUTH_ANOMALY:
+            return str(alert.extra.get("src_ip") or alert.related_host or alert.affected_host)
+        return alert.affected_host or alert.related_host
+
+    def _target_for_alert(self, alert: Alert, actor: str) -> str:
+        if alert.category in (AlertCategory.PORT_SCAN, AlertCategory.LATERAL_MOVEMENT):
+            target = alert.affected_host
+        else:
+            target = alert.related_host
+        return target if target and target != actor else ""
+
+    def _matched_single_host_sequence(
+        self, events: Iterable[_CorrelationEvent]
+    ) -> Optional[list[_CorrelationEvent]]:
+        matched: list[_CorrelationEvent] = []
+        next_index = 0
+        for event in events:
+            if event.category == self._SINGLE_HOST_SEQUENCE[next_index]:
+                matched.append(event)
+                next_index += 1
+                if next_index == len(self._SINGLE_HOST_SEQUENCE):
+                    return matched
+        return None
 
     def _build_incident(self, actor, sensors, targets, categories, event_count) -> Alert:
         n_sensors, n_targets = len(sensors), len(targets)
@@ -116,5 +176,51 @@ class IncidentCorrelator:
                 "target_count": n_targets,
                 "event_count": event_count,
                 "categories": sorted(categories),
+            },
+        )
+
+    def _build_sequence_incident(self, actor: str, sequence: list[_CorrelationEvent]) -> Alert:
+        timeline = [
+            {
+                "timestamp": event.timestamp.isoformat(),
+                "category": event.category,
+                "severity": event.severity,
+                "title": event.title,
+                "affected_host": event.affected_host,
+                "related_host": event.related_host,
+            }
+            for event in sequence
+        ]
+        logger.warning(
+            "Correlated single-host incident: %s — %s.",
+            actor,
+            " -> ".join(event.category for event in sequence),
+        )
+        return Alert(
+            severity=Severity.HIGH,
+            category=AlertCategory.INCIDENT,
+            affected_host=actor,
+            title=f"Possible intrusion sequence: {actor}",
+            description=(
+                f"{actor} followed a suspicious sequence within {self.config.window_seconds}s: "
+                "new device, reconnaissance, then lateral movement/admin access. "
+                "Correlating these events into one incident preserves the raw alerts while making "
+                "the likely attack story visible."
+            ),
+            recommended_action=(
+                f"Treat {actor} as a likely compromised or unauthorized host. Review the timeline, "
+                "confirm whether the device is expected, and consider isolating it pending investigation."
+            ),
+            confidence=0.85,
+            confidence_rationale=(
+                "Observed ordered NEW_DEVICE -> PORT_SCAN -> LATERAL_MOVEMENT alerts "
+                f"for {actor} inside the configured correlation window."
+            ),
+            dedup_key=f"incident:sequence:{actor}",
+            extra={
+                "actor": actor,
+                "sequence": [event.category for event in sequence],
+                "timeline": timeline,
+                "event_count": len(sequence),
             },
         )
