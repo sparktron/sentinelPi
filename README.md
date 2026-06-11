@@ -182,16 +182,18 @@ ruff check src tests
 
 # Validate a config and start monitoring (sudo only if packet capture is enabled)
 SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main --check-config
+SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main --check
 SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main
 ```
 
 ## Usage
 
 ```text
-sentinelpi [--config PATH] [--check-config] [--version]
+sentinelpi [--config PATH] [--check-config] [--check] [--version]
 
   -c, --config PATH   Path to the YAML config (or set SENTINELPI_CONFIG)
       --check-config  Validate configuration and exit
+      --check         Validate config, then actively test configured outputs
       --version       Print version and exit
 ```
 
@@ -208,6 +210,11 @@ SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main
 `--check-config` validates operator-facing values such as CIDRs, ports, severity names,
 responder backends, and sensitivity profiles. It exits non-zero and prints every issue it
 finds instead of starting with a bad config.
+
+`--check` starts with the same static validation, then runs active preflight checks for configured
+network notifiers and responders. Email connects/authenticates without sending mail; webhook, ntfy,
+and sensor forwarding send a clearly labelled test alert; responders only call side-effect-free
+`plan()` and report what they would do.
 
 **Accessing the dashboard.** Authentication is always on. Set a stable token under
 `dashboard.access_token`; if you leave it blank, SentinelPi generates one per run and prints
@@ -252,7 +259,7 @@ with a safe default — you only configure what differs for your network.
 | `thresholds` / `whitelist_*` | Per-detector tuning and never-alert allowlists |
 
 Quick start: set `network.interfaces`, `network.subnets`, and `network.gateway_ip`, list your
-`trusted_devices`, then run `sentinelpi --check-config`. Full reference in
+`trusted_devices`, then run `sentinelpi --check-config` and `sentinelpi --check`. Full reference in
 [docs/configuration_guide.md](docs/configuration_guide.md).
 
 ## Detection capabilities

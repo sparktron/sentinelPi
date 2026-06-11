@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from .ui.dashboard import DashboardServer
 
 from .config.manager import Config, load_config, validate_config
+from .config.preflight import run_preflight
 from .storage.database import Database
 from .baseline.engine import BaselineEngine
 from .inventory.device_tracker import DeviceTracker
@@ -739,6 +740,7 @@ Examples:
   sentinelpi                           # Start with auto-detected config
   sentinelpi --config /etc/sentinelpi/sentinelpi.yaml
   sentinelpi --check-config            # Validate config and exit
+  sentinelpi --check                   # Validate config and actively test outputs
   sentinelpi --version                 # Print version and exit
         """,
     )
@@ -753,6 +755,11 @@ Examples:
         help="Validate configuration and exit without starting",
     )
     parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate config, then actively test configured notifiers/responders",
+    )
+    parser.add_argument(
         "--version",
         action="store_true",
         help="Print version and exit",
@@ -765,7 +772,7 @@ Examples:
         print(f"SentinelPi {__version__}")
         sys.exit(0)
 
-    if args.check_config:
+    if args.check_config or args.check:
         config = load_config(args.config)
         issues = validate_config(config)
         if issues:
@@ -779,6 +786,13 @@ Examples:
         print(f"  Sensitivity: {config.monitoring.sensitivity_profile}")
         print(f"  Dashboard: {'enabled' if config.dashboard.enabled else 'disabled'} "
               f"at {config.dashboard.host}:{config.dashboard.port}")
+        if args.check:
+            print("\nPreflight checks:")
+            results = run_preflight(config)
+            for result in results:
+                print(f"  [{result.status.upper():4}] {result.name}: {result.detail}")
+            if any(result.failed for result in results):
+                sys.exit(3)
         sys.exit(0)
 
     app = SentinelPi(config_path=args.config)

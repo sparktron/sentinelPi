@@ -5,6 +5,7 @@ import sys
 import os
 
 from sentinelpi.config.manager import Config, validate_config
+from sentinelpi.config.preflight import run_preflight
 
 
 def _issue_paths(config: Config) -> set[str]:
@@ -75,3 +76,54 @@ def test_check_config_exits_nonzero_for_invalid_yaml(tmp_path):
     assert "network.subnets[0]" in result.stdout
     assert "dashboard.port" in result.stdout
     assert "monitoring.sensitivity_profile" in result.stdout
+
+
+def test_preflight_skips_when_outputs_are_disabled():
+    results = run_preflight(Config())
+
+    assert ("notifiers", "skip", "no network notifiers enabled") in [
+        (r.name, r.status, r.detail) for r in results
+    ]
+    assert ("responders", "skip", "response.enabled is false") in [
+        (r.name, r.status, r.detail) for r in results
+    ]
+
+
+def test_preflight_plans_enabled_responder_without_executing():
+    config = Config()
+    config.response.enabled = True
+    config.response.firewall_block_enabled = True
+    config.response.auto_block_categories = ["threat_intel"]
+
+    results = run_preflight(config)
+
+    firewall = next(r for r in results if r.name == "responder:firewall")
+    assert firewall.status == "ok"
+    assert "[dry-run] would: Block 203.0.113.10" in firewall.detail
+
+
+def test_check_runs_preflight_and_returns_probe_failure(tmp_path):
+    config_path = tmp_path / "sentinelpi.yaml"
+    config_path.write_text(
+        "\n".join([
+            "notifications:",
+            "  webhook_enabled: true",
+            "  webhook_url: http://127.0.0.1:9/sentinelpi",
+        ]),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "src"
+    result = subprocess.run(
+        [sys.executable, "-m", "sentinelpi.main", "--config", str(config_path), "--check"],
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 3
+    assert "Configuration OK" in result.stdout
+    assert "Preflight checks:" in result.stdout
+    assert "[FAIL] notifier:webhook: POST http://127.0.0.1:9/sentinelpi" in result.stdout

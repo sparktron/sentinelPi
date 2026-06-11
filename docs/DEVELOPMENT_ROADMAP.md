@@ -24,8 +24,8 @@ coverage-enabled pytest. The first incident-UX slice is shipped: ordered single-
 new-device -> port-scan -> lateral-movement chains now raise INCIDENT alerts with timelines, and
 the dashboard now renders those timelines inline. The ntfy actionable notifier (Approve/Reject for
 pending responses) is also shipped, and mypy now passes clean and gates CI. Next implementation
-pass should move into `--check` notifier/responder dry-run exercising, then per-host profile
-dimensions.
+`--check` now exercises configured notifiers/responders in preflight mode. Next implementation pass
+should move into per-host profile dimensions beyond active hours.
 
 ### Critical
 
@@ -207,6 +207,9 @@ Exit criteria:
 - ✅ Add ntfy actionable notifications for pending responder approvals. _Shipped (2026-06-10):
   `NtfyNotifier` pushes alerts and Approve/Reject action buttons that call the dashboard response
   API; wired via `ResponderManager.set_pending_notifier`._
+- ✅ Add active `--check` preflight for configured notifiers/responders. _Shipped (2026-06-11):
+  network notifiers are probed, responders plan synthetic alerts without execution, and the CLI
+  exits non-zero on preflight failure._
 - Add dashboard live updates with server-sent events or WebSockets.
 - Add per-host drill-down pages: timeline, known destinations, DNS history, device identity, and
   responder history.
@@ -228,8 +231,8 @@ Exit criteria:
   affected hosts, and recommended next action.
 - **Actionable ntfy notifier:** ✅ shipped (2026-06-10) — `NtfyNotifier` sends pending response
   actions with approve/reject buttons that call the existing response endpoints.
-- **Config doctor:** expand `--check-config` into a preflight that validates config, probes optional
-  files/binaries, tests notifier credentials in dry-run mode, and prints degraded features.
+- **Config doctor:** ✅ active notifier/responder preflight is shipped via `--check`; follow-up is
+  probing optional files/binaries and printing degraded feature summaries.
 - **Baseline backup/restore:** export/import learned DNS, destinations, active hours, countries, and
   device inventory for hardware replacement or SD-card recovery.
 - **Dashboard live mode:** live alert stream, stale sensor warnings, and queue/degraded-health badges.

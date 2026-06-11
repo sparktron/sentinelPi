@@ -26,10 +26,21 @@ from email.mime.text import MIMEText
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from ..models import Alert, Severity
+from ..models import Alert, AlertCategory, Severity
 from ..config.manager import Config
 
 logger = logging.getLogger(__name__)
+
+
+def _preflight_alert() -> Alert:
+    """A harmless INFO alert used to exercise a notifier during ``--check``."""
+    return Alert(
+        severity=Severity.INFO,
+        category=AlertCategory.SYSTEM,
+        title="SentinelPi preflight check",
+        description="Test notification from `sentinelpi --check`. Safe to ignore.",
+        recommended_action="No action needed.",
+    )
 
 # ANSI color codes for terminal output
 _COLORS = {
@@ -53,6 +64,16 @@ class BaseNotifier(ABC):
     def close(self, timeout: float = 5.0) -> None:
         """Release resources and stop background workers, if any."""
         return None
+
+    def preflight(self) -> tuple[bool, str]:
+        """
+        Actively exercise this notifier's channel for ``sentinelpi --check``.
+
+        Returns ``(ok, detail)``. The default is a no-op for channels with
+        nothing to probe (console, file). Network notifiers override this to
+        test connectivity/credentials, which may deliver a test notification.
+        """
+        return (True, "no active check")
 
     def _alert_to_dict(self, alert: Alert) -> dict:
         """Convert an Alert to a JSON-serializable dict."""
@@ -198,6 +219,27 @@ class EmailNotifier(BaseNotifier):
         if self._thread.is_alive():
             logger.warning("Email notifier did not stop cleanly.")
 
+    def preflight(self) -> tuple[bool, str]:
+        if not self._config.email_enabled:
+            return (True, "disabled")
+        host, port = self._config.email_smtp_host, self._config.email_smtp_port
+        try:
+            if self._config.email_smtp_tls:
+                smtp: smtplib.SMTP = smtplib.SMTP_SSL(host, port, timeout=10)
+            else:
+                smtp = smtplib.SMTP(host, port, timeout=10)
+            try:
+                smtp.ehlo()
+                if self._config.email_username:
+                    smtp.login(self._config.email_username, self._config.email_password)
+                smtp.noop()
+            finally:
+                smtp.quit()
+        except Exception as exc:
+            return (False, f"SMTP {host}:{port}: {exc}")
+        authed = " (auth OK)" if self._config.email_username else ""
+        return (True, f"connected to SMTP {host}:{port}{authed}; no message sent")
+
     def _send_email(self, alert: Alert) -> None:
         """Send a single alert email."""
         subject = f"[SentinelPi] [{alert.severity.value.upper()}] {alert.title}"
@@ -294,28 +336,36 @@ class WebhookNotifier(BaseNotifier):
         if self._thread.is_alive():
             logger.warning("Webhook notifier did not stop cleanly.")
 
-    def _post_webhook(self, alert: Alert) -> None:
+    def preflight(self) -> tuple[bool, str]:
+        if not self._config.webhook_enabled or not self._config.webhook_url:
+            return (True, "disabled")
         try:
-            import requests
-            payload = {
-                "source": "SentinelPi",
-                "hostname": self._hostname,
-                "alert": self._alert_to_dict(alert),
-            }
-            headers = {"Content-Type": "application/json"}
-            if self._config.webhook_secret:
-                headers["X-SentinelPi-Secret"] = self._config.webhook_secret
-
-            resp = requests.post(
-                self._config.webhook_url,
-                json=payload,
-                headers=headers,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            logger.debug("Webhook delivered for: %s", alert.title)
+            self._post_webhook(_preflight_alert())
         except Exception as exc:
-            logger.error("Webhook delivery failed: %s", exc)
+            return (False, f"POST {self._config.webhook_url}: {exc}")
+        return (True, f"delivered test payload to {self._config.webhook_url}")
+
+    def _post_webhook(self, alert: Alert) -> None:
+        # Raises on failure; the worker loop wraps this and logs. Letting it
+        # raise also lets preflight() report delivery success/failure.
+        import requests
+        payload = {
+            "source": "SentinelPi",
+            "hostname": self._hostname,
+            "alert": self._alert_to_dict(alert),
+        }
+        headers = {"Content-Type": "application/json"}
+        if self._config.webhook_secret:
+            headers["X-SentinelPi-Secret"] = self._config.webhook_secret
+
+        resp = requests.post(
+            self._config.webhook_url,
+            json=payload,
+            headers=headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.debug("Webhook delivered for: %s", alert.title)
 
 
 class NtfyNotifier(BaseNotifier):
@@ -449,6 +499,22 @@ class NtfyNotifier(BaseNotifier):
         if self._thread.is_alive():
             logger.warning("ntfy notifier did not stop cleanly.")
 
+    def preflight(self) -> tuple[bool, str]:
+        if not self._config.ntfy_enabled or not self._config.ntfy_topic:
+            return (True, "disabled")
+        target = f"{self._config.ntfy_server.rstrip('/')}/{self._config.ntfy_topic}"
+        try:
+            self._publish({
+                "topic": self._config.ntfy_topic,
+                "title": "SentinelPi preflight check",
+                "message": "Test notification from `sentinelpi --check`. Safe to ignore.",
+                "priority": 2,
+                "tags": ["white_check_mark"],
+            })
+        except Exception as exc:
+            return (False, f"publish to {target}: {exc}")
+        return (True, f"published test notification to {target}")
+
     def _publish(self, payload: dict) -> None:
         import requests
         headers = {"Content-Type": "application/json"}
@@ -513,6 +579,15 @@ class ForwardNotifier(BaseNotifier):
         self._thread.join(timeout=timeout)
         if self._thread.is_alive():
             logger.warning("Forward notifier did not stop cleanly.")
+
+    def preflight(self) -> tuple[bool, str]:
+        if not self._cluster.collector_url:
+            return (True, "disabled")
+        try:
+            self._forward(_preflight_alert())
+        except Exception as exc:
+            return (False, f"forward to {self._cluster.collector_url}: {exc}")
+        return (True, f"forwarded test alert to {self._cluster.collector_url}")
 
     def _forward(self, alert: Alert) -> None:
         import requests

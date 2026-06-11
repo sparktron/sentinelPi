@@ -8,7 +8,7 @@
 #   2. Set network.subnets to your local subnet
 #   3. Set network.gateway_ip to your router's IP
 #   4. Add your trusted devices to trusted_devices
-#   5. Run: sentinelpi --check-config to validate
+#   5. Run: sentinelpi --check-config, then sentinelpi --check
 
 # =============================================================================
 # NETWORK

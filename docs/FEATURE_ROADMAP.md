@@ -210,10 +210,11 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
 - ✅ **Self-monitoring / watchdog.** _Shipped: raises SYSTEM alerts for dead managed worker
   threads, stale packet/flow event streams, threat-intel refresh failures/staleness, high
   capture-queue usage, and low disk space; exposes the latest snapshot in `/api/status`._
-- **Config validation + `--check` mode** that lints config and tests notifiers/responders in dry-run.
-  _Partially shipped: `--check-config` now validates operator-facing values (CIDRs, ports,
-  severities, responder backends, sensitivity profiles) and exits non-zero on invalid config.
-  Open: actually exercise notifiers/responders in dry-run from `--check`._
+- ✅ **Config validation + `--check` mode** that lints config and tests notifiers/responders in dry-run.
+  _Shipped: `--check-config` validates operator-facing values (CIDRs, ports, severities, responder
+  backends, sensitivity profiles) and exits non-zero on invalid config. `--check` now runs active
+  preflight checks: configured network notifiers are probed, and responders plan synthetic alerts
+  without executing actions._
 - **Backup/restore** of the baseline DB so a re-image doesn't reset months of learned behavior.
 - ✅ **Continuous integration.** _Shipped: `.github/workflows/ci.yml` runs compile checks, ruff,
   mypy, and coverage-enabled pytest on Python 3.11 + 3.12 for every push/PR, and emits coverage
@@ -257,9 +258,9 @@ should follow the project's conventions (opt-in config, dry-run-safe, tests alon
    `Severity.__lt__` Liskov fix, correlator timestamp typing, None-guards, etc.), and a `mypy` gate
    wired into CI. `mypy` reports clean on 53 source files.
 
-4. **`--check` exercises notifiers/responders in dry-run.** Extend the validated `--check-config`
-   path so it also fires each configured notifier and plans each responder in dry-run, reporting
-   success/failure — catches misconfigured webhooks/SMTP/feeds before they matter.
+4. ✅ **`--check` exercises notifiers/responders in dry-run.** _Shipped (2026-06-11):_
+   `config/preflight.py` probes configured network notifiers and asks enabled responders to plan
+   synthetic alerts without execution. CLI exits 3 on preflight failure.
 
 5. **Per-host profile dimensions beyond active-hours** (Phase 4): typical ports / bytes / peer-set,
    alerting on deviation from the host's *own* learned profile. Extends
