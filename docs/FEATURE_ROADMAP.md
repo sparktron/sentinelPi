@@ -216,8 +216,8 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
   Open: actually exercise notifiers/responders in dry-run from `--check`._
 - **Backup/restore** of the baseline DB so a re-image doesn't reset months of learned behavior.
 - ✅ **Continuous integration.** _Shipped: `.github/workflows/ci.yml` runs compile checks, ruff,
-  coverage-enabled pytest on Python 3.11 + 3.12 for every push/PR, and emits coverage XML. Open:
-  mypy once third-party stubs and annotation gaps are cleaned up._
+  mypy, and coverage-enabled pytest on Python 3.11 + 3.12 for every push/PR, and emits coverage
+  XML._
 
 ---
 
@@ -251,8 +251,11 @@ should follow the project's conventions (opt-in config, dry-run-safe, tests alon
    `<details>` "Incident timeline" with the ordered events (time, severity, category, title) for
    any alert that carries one. Render + API tests in `test_dashboard_render.py`.
 
-3. **Mypy readiness.** Install or configure third-party stubs, tighten the existing annotation
-   gaps, and only then add a mypy CI gate.
+3. ✅ **Mypy readiness.** _Shipped (2026-06-10):_ `[tool.mypy]` config in `pyproject.toml` (untyped
+   libs scapy/waitress/maxminddb ignored via overrides), third-party stubs added to
+   `requirements-dev.txt`, all 35 baseline errors fixed (generic eviction-helper key types,
+   `Severity.__lt__` Liskov fix, correlator timestamp typing, None-guards, etc.), and a `mypy` gate
+   wired into CI. `mypy` reports clean on 53 source files.
 
 4. **`--check` exercises notifiers/responders in dry-run.** Extend the validated `--check-config`
    path so it also fires each configured notifier and plans each responder in dry-run, reporting

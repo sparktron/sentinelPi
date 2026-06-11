@@ -40,6 +40,11 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "ruff>=0.15.0",
+    "mypy>=1.11",
+    "types-requests",
+    "types-PyYAML",
+    "types-psutil",
+    "types-python-dateutil",
 ]
 
 [project.scripts]
@@ -59,3 +64,17 @@ line-length = 120
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["F401", "F841"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+# Start pragmatic: type the code we wrote, don't yet demand full annotations on
+# every function. Tighten incrementally (disallow_untyped_defs, etc.) later.
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+# Third-party libraries without type information (C extensions / no stubs).
+[[tool.mypy.overrides]]
+module = ["scapy.*", "waitress.*", "maxminddb.*"]
+ignore_missing_imports = true

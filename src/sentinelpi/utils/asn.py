@@ -18,7 +18,7 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 try:
-    import maxminddb  # type: ignore
+    import maxminddb
     MAXMINDDB_AVAILABLE = True
 except ImportError:
     MAXMINDDB_AVAILABLE = False

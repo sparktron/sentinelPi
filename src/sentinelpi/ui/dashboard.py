@@ -31,7 +31,7 @@ import threading
 from datetime import timedelta
 from ..utils import clock
 from functools import wraps
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..models import AlertStatus, Severity
 
@@ -476,12 +476,12 @@ def _generate_daily_report(db, device_tracker, baseline) -> dict:
     new_devices = [d for d in devices if d.first_seen > since]
 
     # Alert counts by severity
-    by_severity = {}
+    by_severity: dict[str, int] = {}
     for alert in alerts:
         by_severity[alert.severity.value] = by_severity.get(alert.severity.value, 0) + 1
 
     # Alert counts by category
-    by_category = {}
+    by_category: dict[str, int] = {}
     for alert in alerts:
         by_category[alert.category.value] = by_category.get(alert.category.value, 0) + 1
 
@@ -520,7 +520,8 @@ class DashboardServer:
         self._config = config
         self._thread: Optional[threading.Thread] = None
         # waitress server handle, set only on the waitress path; gives us .close().
-        self._server = None
+        # waitress is untyped, so this is Any.
+        self._server: Any = None
 
     def start(self) -> None:
         if not FLASK_AVAILABLE or self._app is None:

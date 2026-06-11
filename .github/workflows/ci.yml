@@ -41,5 +41,8 @@ jobs:
       - name: Lint
         run: ruff check src tests
 
+      - name: Type check
+        run: mypy
+
       - name: Run test suite
         run: pytest tests/ -q --cov=sentinelpi --cov-report=term-missing --cov-report=xml

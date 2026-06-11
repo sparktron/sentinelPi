@@ -25,7 +25,8 @@ from ..models import Alert, AlertCategory, Severity
 
 logger = logging.getLogger(__name__)
 
-AlertCallback = Callable[[Alert], None]
+# Return value is ignored (AlertManager.process_one returns bool), so accept any.
+AlertCallback = Callable[[Alert], object]
 
 
 class HoneypotService:

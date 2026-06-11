@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import defaultdict, deque
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Deque, Dict, Iterable, NamedTuple, Optional
 
 from ..models import Alert, AlertCategory, Severity
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class _CorrelationEvent(NamedTuple):
-    timestamp: object
+    timestamp: datetime
     sensor: str
     target: str
     category: str
@@ -53,7 +53,7 @@ class IncidentCorrelator:
             lambda: deque(maxlen=500)
         )
         # actor -> last incident time (cooldown)
-        self._last_incident: Dict[str, object] = {}
+        self._last_incident: Dict[str, datetime] = {}
 
     def observe(self, alert: Alert) -> Optional[Alert]:
         """

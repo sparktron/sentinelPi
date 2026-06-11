@@ -37,7 +37,10 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
+
+if TYPE_CHECKING:
+    from .ui.dashboard import DashboardServer
 
 from .config.manager import Config, load_config, validate_config
 from .storage.database import Database
@@ -190,7 +193,7 @@ class SentinelPi:
         self._setup_responders()
 
         # Initialize detectors
-        detector_kwargs = dict(
+        detector_kwargs: dict[str, Any] = dict(
             config=self.config,
             db=self._db,
             baseline=self._baseline,
@@ -242,11 +245,11 @@ class SentinelPi:
         # Flow ingestion sources (conntrack / NetFlow / IPFIX) feed the same
         # queue; the event router is shared and started once by whichever source
         # comes up (packet capture and/or flow ingest).
-        self._flow_sources: List = []
+        self._flow_sources: List[Any] = []
         self._event_router_started = False
 
         # Dashboard
-        self._dashboard_server = None
+        self._dashboard_server: Optional["DashboardServer"] = None
         self._watchdog: Optional[OperationalWatchdog] = None
 
     def _log_capabilities(self) -> None:
@@ -467,14 +470,14 @@ class SentinelPi:
                 started.append(f"netflow/ipfix:{fc.netflow_port}")
 
         if fc.filterlog_enabled:
-            src = FilterlogSource(
+            flog = FilterlogSource(
                 self._capture_queue,
                 path=fc.filterlog_path,
                 interval_seconds=fc.filterlog_interval_seconds,
                 stop_event=self._stop_event,
             )
-            if src.start():
-                self._flow_sources.append(src)
+            if flog.start():
+                self._flow_sources.append(flog)
                 started.append("filterlog")
             else:
                 logger.warning(
@@ -568,6 +571,9 @@ class SentinelPi:
             responder_manager=self._responder_manager,
             watchdog=self._watchdog,
         )
+        if app is None:
+            logger.warning("Dashboard app could not be created — dashboard not started.")
+            return
         self._dashboard_server = DashboardServer(app, self.config)
         self._dashboard_server.start()
 

@@ -23,8 +23,9 @@ low disk space, and `/api/status` health exposure. CI now runs compile checks, r
 coverage-enabled pytest. The first incident-UX slice is shipped: ordered single-host
 new-device -> port-scan -> lateral-movement chains now raise INCIDENT alerts with timelines, and
 the dashboard now renders those timelines inline. The ntfy actionable notifier (Approve/Reject for
-pending responses) is also shipped. Next implementation pass should move into mypy readiness, then
-`--check` notifier/responder dry-run exercising.
+pending responses) is also shipped, and mypy now passes clean and gates CI. Next implementation
+pass should move into `--check` notifier/responder dry-run exercising, then per-host profile
+dimensions.
 
 ### Critical
 
@@ -129,7 +130,7 @@ pending responses) is also shipped. Next implementation pass should move into my
    - Prune `_last_alert` opportunistically in `_analyze_dns()` with the base eviction helper.
    - Add a memory-bounding test specific to `DNSDetector`.
 
-8. **CI runs tests but not lint, packaging, or coverage gates.** **Status: partially fixed.**
+8. **CI runs tests but not lint, packaging, or coverage gates.** **Status: largely fixed.**
 
    The repo has ruff settings and optional coverage dependency, but CI only installs dependencies
    and runs pytest. This misses import/package regressions and low-cost style failures.
@@ -142,8 +143,9 @@ pending responses) is also shipped. Next implementation pass should move into my
    - Add `python -m build` or at least an editable install smoke test.
    - Keep coverage informational until thresholds are stable.
 
-   Status update: compileall, ruff, and coverage XML are now wired into CI. Packaging smoke tests
-   and mypy readiness remain open.
+   Status update: compileall, ruff, mypy, and coverage XML are now wired into CI (2026-06-10 —
+   mypy passes clean on all 53 source files with stubs + `[tool.mypy]` config). Packaging smoke
+   tests remain the only open CI item.
 
 ## Implementation Roadmap
 

@@ -23,7 +23,9 @@ class Severity(str, Enum):
     HIGH = "high"
     CRITICAL = "critical"
 
-    def __lt__(self, other: "Severity") -> bool:
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, Severity):
+            return NotImplemented
         order = [Severity.INFO, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
         return order.index(self) < order.index(other)
 

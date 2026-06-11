@@ -79,7 +79,7 @@ class AuthLogDetector(BaseDetector):
         self._file_pos: int = 0
         self._file_inode: int = 0
         self._initialized = False
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
         # SSH failure tracking: src_ip → deque of timestamps
         self._ssh_failures: Dict[str, deque] = defaultdict(lambda: deque(maxlen=500))
