@@ -11,6 +11,7 @@ Available notifiers:
 - EmailNotifier: SMTP email (optional).
 - WebhookNotifier: HTTP POST to a URL (optional).
 - NtfyNotifier: ntfy push with Approve/Reject action buttons (optional).
+- TwilioSMSNotifier: SMS via Twilio Programmable Messaging (optional).
 """
 
 from __future__ import annotations
@@ -528,6 +529,103 @@ class NtfyNotifier(BaseNotifier):
         )
         resp.raise_for_status()
         logger.debug("ntfy notification delivered: %s", payload.get("title"))
+
+
+class TwilioSMSNotifier(BaseNotifier):
+    """
+    Sends SMS alerts through Twilio Programmable Messaging.
+
+    Delivery is queued so Twilio latency cannot block detection. Configure either
+    Account SID + Auth Token, or API Key SID + API Key Secret with the Account
+    SID used in the REST resource URL.
+    """
+
+    API_BASE = "https://api.twilio.com/2010-04-01"
+
+    def __init__(self, config: Config) -> None:
+        self._config = config.notifications
+        self._min_severity = Severity(self._config.sms_min_severity)
+        self._hostname = socket.gethostname()
+        self._queue: "queue.Queue[Alert]" = queue.Queue(maxsize=100)
+        self._stop_event = threading.Event()
+        self._thread = threading.Thread(target=self._worker, daemon=True, name="TwilioSMSNotifier")
+        self._thread.start()
+
+    def send(self, alert: Alert) -> None:
+        if not self._config.sms_enabled:
+            return
+        if alert.severity < self._min_severity:
+            return
+        if self._stop_event.is_set():
+            logger.warning("Twilio SMS notifier is stopping — dropping alert notification.")
+            return
+        try:
+            self._queue.put_nowait(alert)
+        except Exception:
+            logger.warning("Twilio SMS queue full — dropping alert notification.")
+
+    def _worker(self) -> None:
+        while not self._stop_event.is_set() or not self._queue.empty():
+            try:
+                alert = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                self._send_sms(alert)
+            except Exception as exc:
+                logger.warning("Twilio SMS notification failed: %s", exc)
+
+    def close(self, timeout: float = 5.0) -> None:
+        self._stop_event.set()
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            logger.warning("Twilio SMS notifier did not stop cleanly.")
+
+    def preflight(self) -> tuple[bool, str]:
+        if not self._config.sms_enabled:
+            return (True, "disabled")
+        try:
+            self._send_sms(_preflight_alert())
+        except Exception as exc:
+            return (False, f"Twilio SMS: {exc}")
+        return (True, f"sent test SMS to {len(self._config.sms_to)} recipient(s)")
+
+    def _send_sms(self, alert: Alert) -> None:
+        import requests
+
+        body = self._format_sms(alert)
+        url = f"{self.API_BASE}/Accounts/{self._config.sms_account_sid}/Messages.json"
+        auth = self._auth()
+        for recipient in self._config.sms_to:
+            data = {
+                "To": recipient,
+                "Body": body,
+            }
+            if self._config.sms_messaging_service_sid:
+                data["MessagingServiceSid"] = self._config.sms_messaging_service_sid
+            else:
+                data["From"] = self._config.sms_from
+
+            resp = requests.post(url, data=data, auth=auth, timeout=10)
+            resp.raise_for_status()
+        logger.debug("Twilio SMS sent for alert: %s", alert.title)
+
+    def _auth(self) -> tuple[str, str]:
+        if self._config.sms_api_key_sid and self._config.sms_api_key_secret:
+            return (self._config.sms_api_key_sid, self._config.sms_api_key_secret)
+        return (self._config.sms_account_sid, self._config.sms_auth_token)
+
+    def _format_sms(self, alert: Alert) -> str:
+        host = alert.affected_host or alert.related_host or "unknown host"
+        text = (
+            f"SentinelPi {alert.severity.value.upper()}: {alert.title} "
+            f"({alert.category.value}, {host})"
+        )
+        if alert.recommended_action:
+            text = f"{text}. {alert.recommended_action}"
+        if len(text) > 320:
+            return text[:317].rstrip() + "..."
+        return text
 
 
 class ForwardNotifier(BaseNotifier):

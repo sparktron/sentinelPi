@@ -49,7 +49,8 @@ from .baseline.engine import BaselineEngine
 from .inventory.device_tracker import DeviceTracker
 from .alerts.manager import AlertManager
 from .alerts.notifiers import (
-    ConsoleNotifier, FileNotifier, EmailNotifier, WebhookNotifier, NtfyNotifier, ForwardNotifier,
+    ConsoleNotifier, FileNotifier, EmailNotifier, WebhookNotifier, NtfyNotifier, TwilioSMSNotifier,
+    ForwardNotifier,
 )
 from .responders.manager import ResponderManager
 from .responders.firewall import FirewallResponder
@@ -349,6 +350,12 @@ class SentinelPi:
             logger.info("ntfy notifications enabled: %s/%s",
                         self.config.notifications.ntfy_server.rstrip("/"),
                         self.config.notifications.ntfy_topic)
+
+        # Optional: SMS via Twilio
+        if self.config.notifications.sms_enabled:
+            self._alert_manager.add_notifier(TwilioSMSNotifier(self.config))
+            logger.info("Twilio SMS notifications enabled for %d recipient(s).",
+                        len(self.config.notifications.sms_to))
 
         # Sensor mode: forward alerts to a central collector (Phase 3).
         if self.config.cluster.role == "sensor" and self.config.cluster.collector_url:

@@ -46,6 +46,36 @@ def test_validate_config_rejects_invalid_ports_and_enums():
     assert "response.firewall_backend" in paths
 
 
+def test_validate_config_rejects_incomplete_sms_settings():
+    config = Config()
+    config.notifications.sms_enabled = True
+
+    paths = _issue_paths(config)
+
+    assert "notifications.sms_account_sid" in paths
+    assert "notifications.sms_auth_token" in paths
+    assert "notifications.sms_from" in paths
+    assert "notifications.sms_to" in paths
+
+
+def test_validate_config_accepts_sms_api_key_and_messaging_service():
+    config = Config()
+    n = config.notifications
+    n.sms_enabled = True
+    n.sms_account_sid = "AC123"
+    n.sms_api_key_sid = "SK123"
+    n.sms_api_key_secret = "secret"
+    n.sms_messaging_service_sid = "MG123"
+    n.sms_to = ["+15557654321"]
+
+    paths = _issue_paths(config)
+
+    assert "notifications.sms_account_sid" not in paths
+    assert "notifications.sms_auth_token" not in paths
+    assert "notifications.sms_from" not in paths
+    assert "notifications.sms_to" not in paths
+
+
 def test_check_config_exits_nonzero_for_invalid_yaml(tmp_path):
     config_path = tmp_path / "bad.yaml"
     config_path.write_text(

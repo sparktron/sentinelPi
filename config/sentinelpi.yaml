@@ -262,6 +262,18 @@ notifications:
   ntfy_dashboard_url: ""
   ntfy_dashboard_token: ""
 
+  # Twilio SMS notifications. Prefer API keys for production; Account SID +
+  # Auth Token also works for small/local deployments. Use E.164 phone numbers.
+  sms_enabled: false
+  sms_account_sid: ""             # ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  sms_auth_token: ""              # or leave blank when using API key credentials
+  sms_api_key_sid: ""             # SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  sms_api_key_secret: ""
+  sms_from: ""                    # Twilio sender, e.g. "+15551234567"
+  sms_messaging_service_sid: ""   # optional MG... service; replaces sms_from
+  sms_to: []                      # e.g., ["+15557654321"]
+  sms_min_severity: critical
+
 # =============================================================================
 # REPORTING
 # =============================================================================

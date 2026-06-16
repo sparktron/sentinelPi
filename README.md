@@ -83,7 +83,8 @@ English description, a confidence score, and a recommended next step.
   per-host drill-down pages, suspicious hosts, and a pending-response approval queue
   (token login, session cookie)
 - **Alert management** — dedup, cooldowns, severity levels, acknowledge & mute
-- **Structured outputs** — console, rotating JSON log, SQLite, optional email, webhooks & ntfy push (with Approve/Reject buttons for responder approvals)
+- **Structured outputs** — console, rotating JSON log, SQLite, optional email, Twilio SMS,
+  webhooks & ntfy push (with Approve/Reject buttons for responder approvals)
 - **Daily / weekly reports** — rolled-up summaries of what happened on the network
 
 **🌐 Whole-network coverage**
@@ -255,7 +256,7 @@ with a safe default — you only configure what differs for your network.
 | `monitoring.packet_capture_enabled` | `true` for full capture, `false` for `/proc`-only (no root) |
 | `monitoring.self_monitoring_*` | Watchdog checks for worker death, stale capture, threat-intel refresh, queue saturation, and low disk |
 | `dashboard` | Host/port and access token |
-| `notifications` | Email, webhook, and daily/weekly report settings |
+| `notifications` | Email, Twilio SMS, webhook, ntfy, and daily/weekly report settings |
 | `threat_intel` | Enable blocklist feeds and matching |
 | `response` | Optional active-response layer (off + dry-run by default) |
 | `multi_sensor` | Collector/sensor mTLS forwarding |

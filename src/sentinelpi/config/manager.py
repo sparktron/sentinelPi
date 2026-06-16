@@ -103,6 +103,18 @@ class NotificationConfig:
     ntfy_dashboard_url: str = ""
     ntfy_dashboard_token: str = ""
 
+    # Twilio SMS notifications. Use either Account SID + Auth Token, or API Key
+    # SID + API Key Secret with the Account SID in the request URL.
+    sms_enabled: bool = False
+    sms_account_sid: str = ""
+    sms_auth_token: str = ""
+    sms_api_key_sid: str = ""
+    sms_api_key_secret: str = ""
+    sms_from: str = ""
+    sms_messaging_service_sid: str = ""
+    sms_to: List[str] = field(default_factory=list)
+    sms_min_severity: str = "critical"
+
 
 @dataclass
 class DashboardConfig:
@@ -651,7 +663,25 @@ def validate_config(config: Config) -> List[ConfigIssue]:
     check_severity("notifications.email_min_severity", config.notifications.email_min_severity)
     check_severity("notifications.webhook_min_severity", config.notifications.webhook_min_severity)
     check_severity("notifications.ntfy_min_severity", config.notifications.ntfy_min_severity)
+    check_severity("notifications.sms_min_severity", config.notifications.sms_min_severity)
     check_port("notifications.email_smtp_port", config.notifications.email_smtp_port)
+    if config.notifications.sms_enabled:
+        if not config.notifications.sms_account_sid:
+            add("notifications.sms_account_sid", "is required when SMS notifications are enabled")
+        has_auth_token = bool(config.notifications.sms_auth_token)
+        has_api_key = bool(config.notifications.sms_api_key_sid and config.notifications.sms_api_key_secret)
+        if not has_auth_token and not has_api_key:
+            add(
+                "notifications.sms_auth_token",
+                "or sms_api_key_sid/sms_api_key_secret is required when SMS notifications are enabled",
+            )
+        if not config.notifications.sms_from and not config.notifications.sms_messaging_service_sid:
+            add(
+                "notifications.sms_from",
+                "or sms_messaging_service_sid is required when SMS notifications are enabled",
+            )
+        if not config.notifications.sms_to:
+            add("notifications.sms_to", "must include at least one recipient when SMS notifications are enabled")
 
     check_non_negative_int("storage.retention_days", config.storage.retention_days)
     check_non_negative_int("storage.vacuum_interval_seconds", config.storage.vacuum_interval_seconds)

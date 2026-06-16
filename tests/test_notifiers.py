@@ -166,6 +166,119 @@ def test_ntfy_disabled_sends_nothing():
     assert captured == []
 
 
+def _sms_config():
+    config = Config()
+    n = config.notifications
+    n.sms_enabled = True
+    n.sms_account_sid = "AC123"
+    n.sms_auth_token = "auth-token"
+    n.sms_from = "+15551234567"
+    n.sms_to = ["+15557654321", "+15559876543"]
+    n.sms_min_severity = "high"
+    return config
+
+
+def test_twilio_sms_filters_below_min_severity():
+    from sentinelpi.alerts.notifiers import TwilioSMSNotifier
+
+    notifier = TwilioSMSNotifier(_sms_config())
+    captured = []
+    notifier._send_sms = lambda alert: captured.append(alert.title)
+
+    notifier.send(Alert(severity=Severity.MEDIUM, category=AlertCategory.SYSTEM, title="Quiet"))
+    notifier.send(Alert(severity=Severity.CRITICAL, category=AlertCategory.SYSTEM, title="Loud"))
+    notifier.close(timeout=2)
+
+    assert captured == ["Loud"]
+    assert not notifier._thread.is_alive()
+
+
+def test_twilio_sms_posts_form_payload(monkeypatch):
+    from sentinelpi.alerts.notifiers import TwilioSMSNotifier
+
+    posted = []
+
+    class _Response:
+        def raise_for_status(self):
+            pass
+
+    def fake_post(url, data, auth, timeout):
+        posted.append({"url": url, "data": data, "auth": auth, "timeout": timeout})
+        return _Response()
+
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    notifier = TwilioSMSNotifier.__new__(TwilioSMSNotifier)
+    notifier._config = _sms_config().notifications
+    notifier._hostname = "sensor-1"
+    alert = Alert(
+        severity=Severity.CRITICAL,
+        category=AlertCategory.THREAT_INTEL,
+        affected_host="10.0.0.9",
+        title="Known bad host",
+        recommended_action="Investigate now.",
+    )
+
+    notifier._send_sms(alert)
+
+    assert len(posted) == 2
+    assert posted[0]["url"] == "https://api.twilio.com/2010-04-01/Accounts/AC123/Messages.json"
+    assert posted[0]["auth"] == ("AC123", "auth-token")
+    assert posted[0]["timeout"] == 10
+    assert posted[0]["data"]["From"] == "+15551234567"
+    assert posted[0]["data"]["To"] == "+15557654321"
+    assert "SentinelPi CRITICAL: Known bad host" in posted[0]["data"]["Body"]
+
+
+def test_twilio_sms_uses_api_key_and_messaging_service(monkeypatch):
+    from sentinelpi.alerts.notifiers import TwilioSMSNotifier
+
+    posted = []
+
+    class _Response:
+        def raise_for_status(self):
+            pass
+
+    def fake_post(url, data, auth, timeout):
+        posted.append({"data": data, "auth": auth})
+        return _Response()
+
+    import requests
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    config = _sms_config()
+    n = config.notifications
+    n.sms_auth_token = ""
+    n.sms_api_key_sid = "SK123"
+    n.sms_api_key_secret = "secret"
+    n.sms_from = ""
+    n.sms_messaging_service_sid = "MG123"
+
+    notifier = TwilioSMSNotifier.__new__(TwilioSMSNotifier)
+    notifier._config = n
+    notifier._send_sms(Alert(severity=Severity.HIGH, category=AlertCategory.SYSTEM, title="Test"))
+
+    assert posted[0]["auth"] == ("SK123", "secret")
+    assert posted[0]["data"]["MessagingServiceSid"] == "MG123"
+    assert "From" not in posted[0]["data"]
+
+
+def test_twilio_sms_preflight_sends_labelled_test():
+    from sentinelpi.alerts.notifiers import TwilioSMSNotifier
+
+    notifier = TwilioSMSNotifier.__new__(TwilioSMSNotifier)
+    notifier._config = _sms_config().notifications
+    sent = []
+    notifier._send_sms = lambda alert: sent.append(alert.title)
+
+    ok, detail = notifier.preflight()
+
+    assert ok is True
+    assert sent == ["SentinelPi preflight check"]
+    assert "sent test SMS" in detail
+
+
 def test_responder_manager_fires_pending_notifier():
     from sentinelpi.responders.manager import ResponderManager
     from sentinelpi.responders.base import BaseResponder, ResponderAction

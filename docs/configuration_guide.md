@@ -196,6 +196,29 @@ notifications:
   email_min_severity: high
 ```
 
+### Twilio SMS
+
+SentinelPi can send high-signal alerts as SMS through Twilio Programmable Messaging. Keep
+`sms_min_severity` at `critical` or `high` unless you intentionally want frequent texts; Twilio
+charges per segment and long messages may be split by carriers.
+
+```yaml
+notifications:
+  sms_enabled: true
+  sms_account_sid: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  sms_auth_token: ""                # optional when API key credentials are set
+  sms_api_key_sid: "SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  sms_api_key_secret: "<twilio-api-key-secret>"
+  sms_from: "+15551234567"          # or set sms_messaging_service_sid instead
+  sms_messaging_service_sid: ""
+  sms_to:
+    - "+15557654321"
+  sms_min_severity: critical
+```
+
+Run `sentinelpi --check` after configuring SMS. The preflight sends a labelled test SMS so you can
+verify credentials, sender registration, and delivery before trusting it for real alerts.
+
 ## Whole-Network Coverage (Phase 3)
 
 By default SentinelPi sees its own host plus whatever the LAN segment lets it

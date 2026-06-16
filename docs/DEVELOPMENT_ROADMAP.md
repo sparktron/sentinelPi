@@ -29,7 +29,7 @@ profile dimensions are shipped. Dashboard live updates are shipped via server-se
 polling fallback. Host drill-down pages are shipped with device identity, recent alerts, known
 destinations, DNS history, host profile values, response-action history, and dashboard links from
 host IPs. Next implementation pass should move into SIEM-friendly export formats or
-backup/restore.
+backup/restore. Twilio SMS alerts are also shipped as a notification-channel expansion.
 
 ### Critical
 
@@ -216,6 +216,10 @@ Exit criteria:
 - ✅ Add active `--check` preflight for configured notifiers/responders. _Shipped (2026-06-11):
   network notifiers are probed, responders plan synthetic alerts without execution, and the CLI
   exits non-zero on preflight failure._
+- ✅ Add Twilio SMS alerts for high-signal phone notifications. _Shipped (2026-06-14):
+  `TwilioSMSNotifier` sends queued SMS via Twilio Programmable Messaging, supports Account SID/Auth
+  Token or API Key credentials, validates sender/recipient settings, and participates in
+  `sentinelpi --check`._
 - ✅ Add dashboard live updates with server-sent events or WebSockets. _Shipped (2026-06-14):
   `/api/events` streams dashboard status ticks; the frontend uses EventSource for live
   status/alert/response refresh and falls back to polling if the stream drops._
@@ -242,6 +246,8 @@ Exit criteria:
   affected hosts, and recommended next action.
 - **Actionable ntfy notifier:** ✅ shipped (2026-06-10) — `NtfyNotifier` sends pending response
   actions with approve/reject buttons that call the existing response endpoints.
+- **Twilio SMS notifier:** ✅ shipped (2026-06-14) — high-signal alerts can be sent as SMS with
+  preflight delivery checks and severity filtering.
 - **Config doctor:** ✅ active notifier/responder preflight is shipped via `--check`; follow-up is
   probing optional files/binaries and printing degraded feature summaries.
 - **Baseline backup/restore:** export/import learned DNS, destinations, active hours, countries, and
