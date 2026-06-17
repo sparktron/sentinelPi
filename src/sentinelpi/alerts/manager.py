@@ -167,10 +167,16 @@ class AlertManager:
         except Exception as exc:
             logger.error("Failed to save alert to DB: %s", exc)
 
-        # 5. Update device suspicion score
+        # 5. Update device suspicion score, and record a trend point at this
+        #    instant so the dashboard can chart the host's suspicion over time.
         if alert.affected_host:
             delta = self._suspicion_delta(alert)
-            self.device_tracker.mark_device_suspicious(alert.affected_host, delta)
+            new_score = self.device_tracker.mark_device_suspicious(alert.affected_host, delta)
+            if new_score is not None:
+                try:
+                    self.db.record_suspicion_point(alert.affected_host, new_score, alert.timestamp)
+                except Exception as exc:
+                    logger.error("Failed to record suspicion point: %s", exc)
 
         # 6. Fan out to notifiers
         for notifier in self._notifiers:

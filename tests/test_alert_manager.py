@@ -51,6 +51,24 @@ class TestAlertManager:
         assert saved is not None
         assert saved.title == "Test Alert"
 
+    def test_records_suspicion_history_point(self, alert_manager, db, device_tracker):
+        """Processing an alert for a known host appends a suspicion-trend point."""
+        from sentinelpi.models import Device
+
+        ip = "192.168.1.77"
+        device_tracker._devices_by_ip[ip] = Device(ip=ip, mac="aa:bb:cc:dd:ee:ff")
+
+        alert_manager.process_one(make_test_alert(host=ip, dedup_key=f"trend:{ip}"))
+
+        history = db.get_suspicion_history(ip)
+        assert len(history) == 1
+        assert history[0]["score"] > 0
+
+    def test_no_suspicion_point_for_unknown_host(self, alert_manager, db):
+        """An alert for a host the tracker doesn't know records no trend point."""
+        alert_manager.process_one(make_test_alert(host="10.99.99.99", dedup_key="trend:unknown"))
+        assert db.get_suspicion_history("10.99.99.99") == []
+
     def test_duplicate_alert_suppressed(self, alert_manager):
         """Second alert with same dedup_key should be suppressed within cooldown."""
         alert1 = make_test_alert(dedup_key="dup:test")

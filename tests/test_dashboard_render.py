@@ -171,6 +171,8 @@ def test_device_detail_api_returns_host_context(authed_client, db):
     db.record_host_profile_value(ip, "peer", "10.0.0.20")
     db.record_host_hour(ip, 13)
     db.record_host_country(ip, "US")
+    db.record_suspicion_point(ip, 1.0, clock.now())
+    db.record_suspicion_point(ip, 2.5, clock.now())
 
     resp = client.get(f"/api/devices/{ip}/detail", headers=headers)
 
@@ -196,6 +198,8 @@ def test_device_detail_api_returns_host_context(authed_client, db):
     # Tie on connections (2 each); the destinations-DESC tiebreak ranks 443 (2
     # distinct destinations) ahead of 53 (1).
     assert data["port_rollup"][0]["port"] == 443
+    # Suspicion trend points, oldest first, for the host page sparkline.
+    assert [p["score"] for p in data["suspicion_trend"]] == [1.0, 2.5]
 
 
 def test_device_detail_api_filters_response_actions(config, db, device_tracker, baseline, alert_manager):

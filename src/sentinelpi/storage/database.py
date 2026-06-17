@@ -28,7 +28,7 @@ from ..models import Alert, AlertStatus, Device, Severity, AlertCategory
 logger = logging.getLogger(__name__)
 
 # Current schema version — bump when adding migrations
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Thread-local storage for per-thread SQLite connections
 _thread_local = threading.local()
@@ -128,6 +128,8 @@ class Database:
             self._migrate_v6(conn)
         if current_version < 7:
             self._migrate_v7(conn)
+        if current_version < 8:
+            self._migrate_v8(conn)
 
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
@@ -311,6 +313,25 @@ class Database:
                 ON host_profile(ip, dimension);
         """)
         logger.info("Database migration v7 applied.")
+
+    def _migrate_v8(self, conn: sqlite3.Connection) -> None:
+        """
+        Suspicion-score history: one row each time a host's running suspicion
+        score changes (i.e. per alert), so the dashboard can chart a host's
+        suspicion trend over time instead of showing only its latest value.
+        """
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS suspicion_history (
+                id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                ip    TEXT NOT NULL,
+                score REAL NOT NULL,
+                ts    TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_suspicion_history_ip_ts
+                ON suspicion_history(ip, ts);
+        """)
+        logger.info("Database migration v8 applied.")
 
     # ------------------------------------------------------------------
     # Alert CRUD
@@ -646,6 +667,35 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def record_suspicion_point(self, ip: str, score: float, ts: datetime) -> None:
+        """Append a point to a host's suspicion-score history."""
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO suspicion_history (ip, score, ts) VALUES (?,?,?)",
+                (ip, float(score), ts.isoformat()),
+            )
+
+    def get_suspicion_history(
+        self, ip: str, since: Optional[datetime] = None, limit: int = 500
+    ) -> List[Dict]:
+        """Return a host's suspicion-score points (oldest first) for charting."""
+        conn = self._get_connection()
+        if since is not None:
+            rows = conn.execute(
+                """
+                SELECT ts, score FROM suspicion_history
+                WHERE ip = ? AND ts >= ?
+                ORDER BY ts ASC LIMIT ?
+                """,
+                (ip, since.isoformat(), limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT ts, score FROM suspicion_history WHERE ip = ? ORDER BY ts ASC LIMIT ?",
+                (ip, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def record_dns_domain(self, domain: str) -> None:
         """Record a DNS domain as observed."""
         now = clock.now().isoformat()
@@ -823,9 +873,10 @@ class Database:
             r1 = conn.execute("DELETE FROM alerts WHERE timestamp < ?", (cutoff,))
             r2 = conn.execute("DELETE FROM dns_observations WHERE timestamp < ?", (cutoff,))
             r3 = conn.execute("DELETE FROM connection_events WHERE timestamp < ?", (cutoff,))
+            r4 = conn.execute("DELETE FROM suspicion_history WHERE ts < ?", (cutoff,))
             logger.info(
-                "Purged old records: %d alerts, %d DNS obs, %d connections",
-                r1.rowcount, r2.rowcount, r3.rowcount,
+                "Purged old records: %d alerts, %d DNS obs, %d connections, %d suspicion points",
+                r1.rowcount, r2.rowcount, r3.rowcount, r4.rowcount,
             )
         self._get_connection().execute("PRAGMA wal_checkpoint(PASSIVE)")
 

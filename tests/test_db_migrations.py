@@ -33,6 +33,7 @@ EXPECTED_TABLES = {
     "host_countries",
     "host_activity_hours",
     "host_profile",
+    "suspicion_history",
 }
 
 

@@ -424,6 +424,7 @@ def create_app(
                 "countries": sorted(db.get_host_countries(ip)),
             },
             "port_rollup": [_port_rollup_row(r) for r in db.get_port_rollup_for_host(ip)],
+            "suspicion_trend": db.get_suspicion_history(ip, since=since),
             "response_actions": actions,
         })
 

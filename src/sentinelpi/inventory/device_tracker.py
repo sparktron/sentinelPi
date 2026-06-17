@@ -362,14 +362,20 @@ class DeviceTracker:
         with self._lock:
             return ip in self._devices_by_ip
 
-    def mark_device_suspicious(self, ip: str, score_delta: float = 0.2) -> None:
-        """Increase suspicion score for a device — called by detectors."""
+    def mark_device_suspicious(self, ip: str, score_delta: float = 0.2) -> Optional[float]:
+        """
+        Increase suspicion score for a device — called by detectors. Returns the
+        new score, or None if the device is unknown (so callers can record a
+        suspicion-history point at the same instant).
+        """
         with self._lock:
             device = self._devices_by_ip.get(ip)
             if device:
                 device.suspicion_score = min(device.suspicion_score + score_delta, 10.0)
                 device.alert_count += 1
                 self.db.upsert_device(device)
+                return device.suspicion_score
+        return None
 
     def get_gateway_mac(self) -> Optional[str]:
         """Return the MAC address of the configured gateway, if known."""

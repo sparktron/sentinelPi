@@ -286,8 +286,10 @@ Exit criteria:
   learned peers/destination ports, top DNS domains, known destinations, and recent responder
   actions. Open-port rollups shipped (2026-06-17): the host page now shows a per-port rollup
   (`get_port_rollup_for_host`) of the destination ports a host uses — service label, protocol,
-  distinct destinations, and total connections, ranked by activity. Follow-up: suspicion trend
-  charts (needs a suspicion-score time series, not yet persisted).
+  distinct destinations, and total connections, ranked by activity. Suspicion trend charts shipped
+  (2026-06-17): a schema-v8 `suspicion_history` table records a point each time a host's running
+  suspicion score changes (per alert), and the host page renders an inline-SVG sparkline of the
+  trend (current/peak/point count). This host-investigation-view follow-up is now complete.
 - **Incident timeline engine:** combine related alerts into one narrative with first-seen, escalation,
   affected hosts, and recommended next action.
 - **Actionable ntfy notifier:** ✅ shipped (2026-06-10) — `NtfyNotifier` sends pending response
