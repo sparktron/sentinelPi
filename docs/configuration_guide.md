@@ -388,3 +388,39 @@ sentinelpi --check
 
 Exit codes: `0` = all good, `2` = invalid config, `3` = a preflight probe failed. Because `--check`
 delivers real test notifications, run it interactively rather than in unattended CI.
+
+## Backup & Restore
+
+Every learned baseline — known destinations, hourly connection statistics, DNS domains, per-host
+countries, active hours, and behavioural profiles — plus alerts and the device inventory live in the
+single SQLite database at `storage.db_path`. Backing up that file therefore captures the sensor's
+entire memory, so baselines (which can take days to learn) survive an SD-card failure or a Pi
+re-image.
+
+### Creating a backup
+
+```bash
+sentinelpi --config /etc/sentinelpi/sentinelpi.yaml --backup /mnt/usb/sentinelpi-$(date +%F).tar.gz
+```
+
+The snapshot is taken with SQLite's online backup API, so it is point-in-time consistent **even
+while the daemon is running** — ideal for an unattended cron job to external storage. The archive is
+a gzip-compressed tar containing the database plus a `manifest.json` (format tag, schema version,
+SentinelPi version, creation time, and a SHA-256 checksum).
+
+### Restoring a backup
+
+Stop the service first so it is not writing to the database, then:
+
+```bash
+sentinelpi --config /etc/sentinelpi/sentinelpi.yaml --restore /mnt/usb/sentinelpi-2026-06-17.tar.gz
+```
+
+Restore verifies the checksum and runs a SQLite integrity check before installing the snapshot. Any
+existing database is moved aside to `<db_path>.pre-restore-<timestamp>` rather than deleted, and
+stale WAL/SHM sidecars are cleared. A snapshot from an **older** schema is accepted and upgraded by
+the normal migration path on next startup; a snapshot from a **newer** schema is refused unless you
+pass `--force`.
+
+Exit codes: `0` = success, `4` = backup/restore failed (e.g. missing database, corrupt archive,
+checksum mismatch, or newer schema without `--force`).

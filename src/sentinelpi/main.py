@@ -764,6 +764,8 @@ Examples:
   sentinelpi --config /etc/sentinelpi/sentinelpi.yaml
   sentinelpi --check-config            # Validate config and exit
   sentinelpi --check                   # Validate config and actively test outputs
+  sentinelpi --backup /mnt/usb/snap.tar.gz    # Snapshot the database (safe while running)
+  sentinelpi --restore /mnt/usb/snap.tar.gz   # Restore a snapshot (stop the service first)
   sentinelpi --version                 # Print version and exit
         """,
     )
@@ -783,6 +785,21 @@ Examples:
         help="Validate config, then actively test configured notifiers/responders",
     )
     parser.add_argument(
+        "--backup",
+        metavar="PATH",
+        help="Write a snapshot of the database to PATH and exit (safe while running)",
+    )
+    parser.add_argument(
+        "--restore",
+        metavar="PATH",
+        help="Restore the database from a snapshot at PATH and exit (stop the service first)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="With --restore, allow restoring a snapshot from a newer schema version",
+    )
+    parser.add_argument(
         "--version",
         action="store_true",
         help="Print version and exit",
@@ -793,6 +810,31 @@ Examples:
     if args.version:
         from . import __version__
         print(f"SentinelPi {__version__}")
+        sys.exit(0)
+
+    if args.backup or args.restore:
+        from .storage import backup as backup_mod
+        config = load_config(args.config)
+        db_path = config.storage.db_path
+        try:
+            if args.backup:
+                manifest = backup_mod.create_backup(db_path, args.backup)
+                print(f"Backup written to {args.backup}")
+                print(f"  Source: {db_path}")
+                print(f"  Schema: v{manifest['schema_version']}  "
+                      f"SentinelPi: {manifest['sentinelpi_version']}")
+                print(f"  Size:   {manifest['db_bytes']} bytes")
+            else:
+                manifest = backup_mod.restore_backup(args.restore, db_path, force=args.force)
+                print(f"Restored {args.restore} to {db_path}")
+                print(f"  Schema: v{manifest['schema_version']} "
+                      f"(from SentinelPi {manifest.get('sentinelpi_version', '?')}, "
+                      f"created {manifest.get('created_at', '?')})")
+                if manifest.get("previous_db_saved_to"):
+                    print(f"  Previous database saved to {manifest['previous_db_saved_to']}")
+        except backup_mod.BackupError as exc:
+            print(f"Error: {exc}")
+            sys.exit(4)
         sys.exit(0)
 
     if args.check_config or args.check:

@@ -29,8 +29,10 @@ profile dimensions are shipped. Dashboard live updates are shipped via server-se
 polling fallback. Host drill-down pages are shipped with device identity, recent alerts, known
 destinations, DNS history, host profile values, response-action history, and dashboard links from
 host IPs. Twilio SMS alerts are also shipped as a notification-channel expansion. SIEM-friendly
-export (syslog ECS/CEF via `SyslogNotifier`) is shipped. Next implementation pass should move into
-backup/restore for the SQLite database and baseline state.
+export (syslog ECS/CEF via `SyslogNotifier`) is shipped, as is database backup/restore via
+`--backup`/`--restore`. With Phase 4 complete, the next implementation pass should move into the
+remaining Phase 3 detection-quality work (byte-range/protocol-mix host profiles, adaptive per-host
+thresholds, and alert explainability) or the open daily-report health summaries.
 
 ### Critical
 
@@ -232,12 +234,18 @@ Exit criteria:
   (2026-06-16): `SyslogNotifier` streams alerts to a syslog collector in ECS (Elastic Common Schema
   JSON) or CEF (ArcSight) payloads over UDP/TCP, with severity/facility mapping and RFC 5424 framing;
   pure formatters live in `alerts/siem.py` and the channel participates in `sentinelpi --check`._
-- Add backup/restore for the SQLite database and baseline state.
+- ✅ Add backup/restore for the SQLite database and baseline state. _Shipped (2026-06-16):
+  `storage/backup.py` plus `sentinelpi --backup`/`--restore` write and restore a compressed,
+  self-describing snapshot of the database (all learned baselines + alerts + devices). Backups use
+  SQLite's online backup API so they are consistent while the daemon runs; restore verifies
+  checksum + SQLite integrity, moves the existing DB aside, clears stale WAL/SHM, and refuses a
+  newer-schema snapshot unless `--force`._
 
 Exit criteria:
 - Operators can approve/reject response actions from a phone.
 - ✅ Dashboard can answer "what is this host doing?" without querying raw APIs.
-- Baselines and evidence can survive a Pi re-image.
+- ✅ Baselines and evidence can survive a Pi re-image. _Met (2026-06-16): `--backup`/`--restore`
+  snapshot and restore the full database, including all learned baseline state._
 
 ## Proposed New Features
 
@@ -254,8 +262,10 @@ Exit criteria:
   preflight delivery checks and severity filtering.
 - **Config doctor:** ✅ active notifier/responder preflight is shipped via `--check`; follow-up is
   probing optional files/binaries and printing degraded feature summaries.
-- **Baseline backup/restore:** export/import learned DNS, destinations, active hours, countries, and
-  device inventory for hardware replacement or SD-card recovery.
+- **Baseline backup/restore:** ✅ shipped (2026-06-16) — `--backup`/`--restore` snapshot and restore
+  the full SQLite database (learned DNS, destinations, active hours, countries, host profiles, and
+  device inventory) for hardware replacement or SD-card recovery, with checksum/integrity
+  verification and online (live-safe) snapshots.
 - **Dashboard live mode:** ✅ SSE status/alert/action refresh is shipped; follow-up is stale sensor
   warnings and queue/degraded-health badges.
 

@@ -192,11 +192,15 @@ SENTINELPI_CONFIG=config/sentinelpi.yaml python -m sentinelpi.main
 ## Usage
 
 ```text
-sentinelpi [--config PATH] [--check-config] [--check] [--version]
+sentinelpi [--config PATH] [--check-config] [--check]
+           [--backup PATH] [--restore PATH] [--force] [--version]
 
   -c, --config PATH   Path to the YAML config (or set SENTINELPI_CONFIG)
       --check-config  Validate configuration and exit
       --check         Validate config, then actively test configured outputs
+      --backup PATH   Write a database snapshot to PATH and exit (safe while running)
+      --restore PATH  Restore a database snapshot from PATH and exit (stop the service first)
+      --force         With --restore, allow a snapshot from a newer schema version
       --version       Print version and exit
 ```
 
@@ -218,6 +222,16 @@ finds instead of starting with a bad config.
 network notifiers and responders. Email connects/authenticates without sending mail; webhook, ntfy,
 SMS, SIEM export, and sensor forwarding send a clearly labelled test alert; responders only call side-effect-free
 `plan()` and report what they would do.
+
+**Backup & restore.** `--backup` writes a single compressed, self-describing snapshot of the
+database — which holds *all* learned baselines (known destinations, hourly stats, DNS domains,
+per-host countries, active hours, and behavioural profiles) plus alerts and devices. It uses
+SQLite's online backup API, so it is point-in-time consistent and safe to run while the daemon is
+live (e.g. from cron to a USB stick). `--restore` validates the snapshot's checksum and SQLite
+integrity, moves any existing database aside to `<db>.pre-restore-<timestamp>`, and installs the
+snapshot — so a sensor's memory survives an SD-card failure or a Pi re-image. Stop the service
+before restoring. Snapshots from older schema versions are migrated on next startup; newer ones are
+refused unless you pass `--force`.
 
 **Accessing the dashboard.** Authentication is always on. Set a stable token under
 `dashboard.access_token`; if you leave it blank, SentinelPi generates one per run and prints
