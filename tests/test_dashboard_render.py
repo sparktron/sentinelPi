@@ -164,6 +164,8 @@ def test_device_detail_api_returns_host_context(authed_client, db):
     ))
     db.record_destination(ip, "8.8.8.8", 53, "udp")
     db.record_destination(ip, "8.8.8.8", 53, "udp")
+    db.record_destination(ip, "1.1.1.1", 443, "tcp")
+    db.record_destination(ip, "9.9.9.9", 443, "tcp")
     db.save_dns_observation(clock.now(), ip, "example.test", "A", is_nxdomain=True)
     db.record_host_profile_value(ip, "dst_port", "443")
     db.record_host_profile_value(ip, "peer", "10.0.0.20")
@@ -185,6 +187,15 @@ def test_device_detail_api_returns_host_context(authed_client, db):
     assert data["host_profile"]["internal_peers"] == ["10.0.0.20"]
     assert data["host_profile"]["active_hours"] == [13]
     assert data["host_profile"]["countries"] == ["US"]
+    # Port rollup: ranked by connections, with service labels for known ports.
+    rollup = {(r["port"], r["protocol"]): r for r in data["port_rollup"]}
+    assert rollup[(53, "udp")]["connections"] == 2
+    assert rollup[(53, "udp")]["service"] == "DNS"
+    assert rollup[(443, "tcp")]["destinations"] == 2
+    assert rollup[(443, "tcp")]["service"] == "HTTPS"
+    # Tie on connections (2 each); the destinations-DESC tiebreak ranks 443 (2
+    # distinct destinations) ahead of 53 (1).
+    assert data["port_rollup"][0]["port"] == 443
 
 
 def test_device_detail_api_filters_response_actions(config, db, device_tracker, baseline, alert_manager):

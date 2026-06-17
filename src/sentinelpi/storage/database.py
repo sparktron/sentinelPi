@@ -621,6 +621,31 @@ class Database:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_port_rollup_for_host(self, src_ip: str, limit: int = 15) -> List[Dict]:
+        """
+        Roll up a host's known destinations by (port, protocol): how many
+        distinct destinations it reached on each port and the total connection
+        count. Answers "what services does this host actually talk to?" at a
+        glance, rather than scanning the raw destination list.
+        """
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT dst_port,
+                   protocol,
+                   COUNT(DISTINCT dst_ip) AS destinations,
+                   SUM(hit_count)         AS connections,
+                   MAX(last_seen)         AS last_seen
+            FROM baseline_destinations
+            WHERE src_ip = ?
+            GROUP BY dst_port, protocol
+            ORDER BY connections DESC, destinations DESC
+            LIMIT ?
+            """,
+            (src_ip, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def record_dns_domain(self, domain: str) -> None:
         """Record a DNS domain as observed."""
         now = clock.now().isoformat()

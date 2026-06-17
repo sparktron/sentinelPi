@@ -83,6 +83,16 @@
 </div>
 
 <div class="section">
+  <div class="section-header"><h2>Port Rollup</h2><span class="description">Destination ports this host uses, by activity</span></div>
+  <div class="section-content">
+    <table>
+      <thead><tr><th>Port</th><th>Service</th><th>Protocol</th><th>Destinations</th><th>Connections</th></tr></thead>
+      <tbody id="ports-body"><tr><td colspan="5" class="loading">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section">
   <div class="section-header"><h2>DNS History</h2><span class="description">Recent observed queries</span></div>
   <div class="section-content">
     <table>
@@ -179,6 +189,18 @@ function render(data) {
       <td>${fmtTime(row.last_seen)}</td>
     </tr>
   `).join('') : emptyRow(5, 'No learned destinations yet.');
+
+  const portsBody = document.getElementById('ports-body');
+  const ports = data.port_rollup || [];
+  portsBody.innerHTML = ports.length ? ports.map(row => `
+    <tr>
+      <td><code>${row.port}</code></td>
+      <td>${esc(row.service || '—')}</td>
+      <td>${esc(row.protocol)}</td>
+      <td>${row.destinations}</td>
+      <td>${row.connections}</td>
+    </tr>
+  `).join('') : emptyRow(5, 'No destination ports learned yet.');
 
   const dnsBody = document.getElementById('dns-body');
   dnsBody.innerHTML = data.dns_history.length ? data.dns_history.map(row => `

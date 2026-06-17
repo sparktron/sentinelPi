@@ -423,6 +423,7 @@ def create_app(
                 "active_hours": sorted(db.get_host_hours(ip)),
                 "countries": sorted(db.get_host_countries(ip)),
             },
+            "port_rollup": [_port_rollup_row(r) for r in db.get_port_rollup_for_host(ip)],
             "response_actions": actions,
         })
 
@@ -546,6 +547,36 @@ def _device_to_dict(device) -> dict:
         "suspicion_score": round(device.suspicion_score, 2),
         "device_type": device.extra.get("device_type", "unknown"),
         "device_type_confidence": device.extra.get("device_type_confidence", 0.0),
+    }
+
+
+# Well-known destination ports → service label for the host port rollup. Not
+# exhaustive; unknown ports just show the number.
+_PORT_SERVICES: dict[int, str] = {
+    20: "FTP-data", 21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+    67: "DHCP", 68: "DHCP", 80: "HTTP", 110: "POP3", 123: "NTP", 137: "NetBIOS",
+    138: "NetBIOS", 139: "NetBIOS", 143: "IMAP", 161: "SNMP", 389: "LDAP",
+    443: "HTTPS", 445: "SMB", 465: "SMTPS", 514: "syslog", 587: "SMTP", 631: "IPP",
+    853: "DoT", 993: "IMAPS", 995: "POP3S", 1194: "OpenVPN", 1883: "MQTT",
+    3306: "MySQL", 3389: "RDP", 5060: "SIP", 5353: "mDNS", 5432: "PostgreSQL",
+    5900: "VNC", 6379: "Redis", 8080: "HTTP-alt", 8443: "HTTPS-alt", 8883: "MQTTS",
+    9100: "JetDirect", 27017: "MongoDB",
+}
+
+
+def _port_service(port: int) -> str:
+    return _PORT_SERVICES.get(port, "")
+
+
+def _port_rollup_row(row: dict) -> dict:
+    port = row.get("dst_port") or 0
+    return {
+        "port": port,
+        "protocol": row.get("protocol", ""),
+        "service": _port_service(port),
+        "destinations": row.get("destinations", 0),
+        "connections": row.get("connections", 0),
+        "last_seen": row.get("last_seen"),
     }
 
 

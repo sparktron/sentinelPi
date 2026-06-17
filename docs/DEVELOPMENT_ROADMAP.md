@@ -284,7 +284,10 @@ Exit criteria:
   (overall healthy flag plus a plain-English list of anything degraded)._
 - **Host investigation view:** ✅ shipped for identity, recent alerts, active hours, countries,
   learned peers/destination ports, top DNS domains, known destinations, and recent responder
-  actions. Follow-up: add suspicion trend charts and open-port rollups.
+  actions. Open-port rollups shipped (2026-06-17): the host page now shows a per-port rollup
+  (`get_port_rollup_for_host`) of the destination ports a host uses — service label, protocol,
+  distinct destinations, and total connections, ranked by activity. Follow-up: suspicion trend
+  charts (needs a suspicion-score time series, not yet persisted).
 - **Incident timeline engine:** combine related alerts into one narrative with first-seen, escalation,
   affected hosts, and recommended next action.
 - **Actionable ntfy notifier:** ✅ shipped (2026-06-10) — `NtfyNotifier` sends pending response
