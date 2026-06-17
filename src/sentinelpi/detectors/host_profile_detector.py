@@ -3,7 +3,7 @@ detectors/host_profile_detector.py - Per-host behavioural profiling.
 
 The sibling of :class:`ActiveHoursDetector`: instead of *when* a host is active,
 this learns *what a host normally does* and flags the first off-profile action.
-Two dimensions, both keyed to the host's own history (not a global baseline):
+Four dimensions, all keyed to the host's own history (not a global baseline):
 
 - ``dst_port``: the destination ports a local host normally connects to. A
   daytime laptop that has only ever used 80/443/53 suddenly opening 445 (SMB)
@@ -12,6 +12,13 @@ Two dimensions, both keyed to the host's own history (not a global baseline):
   a workstation connects to an internal server it has never contacted is the
   slow, deliberate cousin of the burst that :class:`LateralMovementDetector`
   catches.
+- ``protocol``: the L4 protocols (tcp/udp/icmp) a host normally uses. A host
+  that has only spoken TCP/UDP suddenly using ICMP can indicate tunneling.
+- ``byte_range``: the per-flow transfer-size buckets a host normally produces.
+  A sudden much larger transfer from a host that only sent small flows is a
+  possible exfiltration tell. Only learned when a flow source supplies byte
+  counts (NetFlow); SYN-only capture and conntrack leave size 0, so the
+  dimension simply stays dormant there.
 
 External peers are deliberately not profiled — their cardinality is unbounded
 (CDNs, ad networks) and carries little host-specific signal; destination *ports*
@@ -36,15 +43,39 @@ logger = logging.getLogger(__name__)
 
 _DIM_PORT = "dst_port"
 _DIM_PEER = "peer"
+_DIM_PROTO = "protocol"
+_DIM_BYTES = "byte_range"
+
+# Ordered byte-size buckets (upper bound in bytes, label). A per-flow size is
+# mapped to the first bucket it fits in; the top bucket is open-ended. Used as
+# discrete profile values so a new, larger-than-usual transfer size stands out.
+_BYTE_BUCKETS: list[tuple[float, str]] = [
+    (1_000, "0-1K"),
+    (10_000, "1K-10K"),
+    (100_000, "10K-100K"),
+    (1_000_000, "100K-1M"),
+    (10_000_000, "1M-10M"),
+    (float("inf"), "10M+"),
+]
+
+
+def _byte_bucket(size: int) -> str:
+    """Map a byte count to its discrete size-bucket label."""
+    for upper, label in _BYTE_BUCKETS:
+        if size < upper:
+            return label
+    return _BYTE_BUCKETS[-1][1]
 
 
 class HostProfileDetector(BaseDetector):
-    """Flags a local host acting outside its own learned port / peer profile."""
+    """Flags a local host acting outside its own learned port / peer / protocol / size profile."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._min_known_ports = self.config.monitoring.host_profile_min_known_ports
         self._min_known_peers = self.config.monitoring.host_profile_min_known_peers
+        self._min_known_protocols = self.config.monitoring.host_profile_min_known_protocols
+        self._min_known_byte_ranges = self.config.monitoring.host_profile_min_known_byte_ranges
         # (ip, dimension) -> set of values seen; seeded lazily from the DB.
         self._seen: Dict[Tuple[str, str], Set[str]] = {}
 
@@ -65,6 +96,18 @@ class HostProfileDetector(BaseDetector):
         if event.dst_ip and self._is_local_ip(event.dst_ip) and event.dst_ip != src:
             alerts += self._observe(
                 src, _DIM_PEER, event.dst_ip, self._min_known_peers
+            )
+        # Protocol mix (tcp/udp/icmp) — very low cardinality; a new protocol is
+        # a strong tell (e.g. ICMP tunneling from a host that only spoke TCP/UDP).
+        if event.protocol:
+            alerts += self._observe(
+                src, _DIM_PROTO, event.protocol, self._min_known_protocols
+            )
+        # Per-flow byte-size bucket — only when a flow source supplies a size
+        # (NetFlow); SYN-only capture and conntrack leave size 0.
+        if event.size and event.size > 0:
+            alerts += self._observe(
+                src, _DIM_BYTES, _byte_bucket(event.size), self._min_known_byte_ranges
             )
         return alerts
 
@@ -109,6 +152,31 @@ class HostProfileDetector(BaseDetector):
                 "is expected for this device."
             )
             rationale = f"First connection from {src} to destination port {value}."
+        elif dimension == _DIM_PROTO:
+            title = f"Off-profile protocol for {who}: {value}"
+            description = (
+                f"{src} used the {value.upper()} protocol for the first time (its profile spans "
+                f"{known} other protocol(s)). A host that has only ever spoken TCP/UDP suddenly "
+                "using ICMP can indicate tunneling or an unexpected new service."
+            )
+            action = (
+                f"Confirm what on {src} is using {value.upper()} and whether that is expected "
+                "for this device."
+            )
+            rationale = f"First {value.upper()} traffic observed from {src}."
+        elif dimension == _DIM_BYTES:
+            title = f"Off-profile transfer size for {who}: {value}"
+            description = (
+                f"{src} produced a flow in the {value} byte range — a transfer size it has not "
+                f"shown before (its profile spans {known} other size range(s)). A sudden much "
+                "larger transfer from a host that only ever sent small flows can indicate "
+                "data exfiltration."
+            )
+            action = (
+                f"Confirm what on {src} produced a {value} transfer and whether that volume is "
+                "expected (a backup/sync is benign; unexplained bulk egress is not)."
+            )
+            rationale = f"First {value} byte-range flow observed from {src}."
         else:  # _DIM_PEER
             peer_name = ""
             peer_device = self.device_tracker.get_device(value)

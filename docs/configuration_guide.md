@@ -76,9 +76,12 @@ monitoring:
 ```
 
 `active_hours_detection_enabled` learns when each host is normally active.
-`host_profile_detection_enabled` learns each host's usual destination ports and
-internal peers, then flags first off-profile values after the profile is
-established (`host_profile_min_known_ports` / `host_profile_min_known_peers`).
+`host_profile_detection_enabled` learns each host's usual destination ports,
+internal peers, L4 protocols (tcp/udp/icmp), and per-flow transfer-size buckets,
+then flags the first off-profile value once that dimension's profile is
+established (`host_profile_min_known_ports`, `_peers`, `_protocols`,
+`_byte_ranges`). Byte-range profiling needs a flow source that reports byte
+counts (NetFlow); under SYN-only capture or conntrack it stays dormant.
 
 ### Self-Monitoring Watchdog
 

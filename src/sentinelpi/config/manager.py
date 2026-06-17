@@ -221,6 +221,13 @@ class MonitoringConfig:
     # many distinct ports / peers learned). Higher = quieter but slower to arm.
     host_profile_min_known_ports: int = 8
     host_profile_min_known_peers: int = 4
+    # Protocol mix (tcp/udp/icmp): a host that has only ever spoken a couple of
+    # protocols suddenly using another (e.g. ICMP) can signal tunneling.
+    host_profile_min_known_protocols: int = 2
+    # Per-flow byte-size buckets: a new, much larger transfer size from a host
+    # that only ever sent small flows is a possible exfiltration tell. Only
+    # learned when a flow source supplies byte counts (e.g. NetFlow).
+    host_profile_min_known_byte_ranges: int = 3
 
     # DHCP lease ingestion for authoritative device identity (names from the
     # router/DHCP server beat ARP-inferred / reverse-DNS guesses).
@@ -632,6 +639,10 @@ def validate_config(config: Config) -> List[ConfigIssue]:
                            config.monitoring.host_profile_min_known_ports)
     check_non_negative_int("monitoring.host_profile_min_known_peers",
                            config.monitoring.host_profile_min_known_peers)
+    check_non_negative_int("monitoring.host_profile_min_known_protocols",
+                           config.monitoring.host_profile_min_known_protocols)
+    check_non_negative_int("monitoring.host_profile_min_known_byte_ranges",
+                           config.monitoring.host_profile_min_known_byte_ranges)
     check_non_negative_int("monitoring.self_monitoring_interval_seconds",
                            config.monitoring.self_monitoring_interval_seconds)
     check_positive_number("monitoring.self_monitoring_queue_warn_ratio",

@@ -114,8 +114,10 @@ monitoring:
   # Per-host behaviour profiling beyond active hours: learn each host's usual
   # destination ports and internal peers, then flag the first off-profile value.
   host_profile_detection_enabled: true
-  host_profile_min_known_ports: 8   # require this many known ports before flagging
-  host_profile_min_known_peers: 4   # require this many known LAN peers before flagging
+  host_profile_min_known_ports: 8       # require this many known ports before flagging
+  host_profile_min_known_peers: 4       # require this many known LAN peers before flagging
+  host_profile_min_known_protocols: 2   # require this many protocols before flagging a new one
+  host_profile_min_known_byte_ranges: 3 # transfer-size buckets before flagging a new one (NetFlow only)
 
   # Honeypot / canary ports: open fake services; ANY connection is high-fidelity
   # evidence of internal scanning -> HIGH alert. Ports < 1024 need root to bind.

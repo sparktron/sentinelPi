@@ -198,7 +198,11 @@ Exit criteria:
 - ✅ Extend per-host profiles beyond active hours: usual peer set and destination ports. _Shipped
   (2026-06-13): `HostProfileDetector` learns `dst_port` and internal `peer` values per host in
   schema-v7 `host_profile`, then flags first off-profile values once each dimension is established._
-- Extend per-host profiles further with byte ranges and protocol mix.
+- ✅ Extend per-host profiles further with byte ranges and protocol mix. _Shipped (2026-06-17):
+  `HostProfileDetector` adds two more dimensions on the same generic `host_profile` store (no schema
+  change) — `protocol` (tcp/udp/icmp first-seen once established) and `byte_range` (per-flow size
+  buckets, learned only when a flow source supplies byte counts, e.g. NetFlow). Both carry structured
+  explainability and are gated by `host_profile_min_known_protocols` / `_byte_ranges`._
 - Add adaptive thresholds per host/network so noisy networks can settle without global sensitivity
   changes.
 - ✅ Add explainability fields to alerts: which thresholds fired, what baseline was compared, and how
