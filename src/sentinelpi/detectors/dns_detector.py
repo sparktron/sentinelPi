@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedDNS
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils.network import domain_entropy, is_suspicious_tld
 
 logger = logging.getLogger(__name__)
@@ -164,7 +164,21 @@ class DNSDetector(BaseDetector):
             confidence=0.65,
             confidence_rationale=f"Entropy {entropy:.2f} exceeds threshold {threshold}.",
             dedup_key=dedup_key,
-            extra={"domain": domain, "entropy": round(entropy, 3), "threshold": threshold},
+            extra={
+                "domain": domain,
+                "entropy": round(entropy, 3),
+                "threshold": threshold,
+                "explanation": explain(
+                    Evidence(
+                        metric="domain_entropy",
+                        observed=round(entropy, 3),
+                        threshold=threshold,
+                        comparison=">",
+                        baseline="Shannon-entropy threshold for DGA-style names",
+                    ),
+                    confidence_basis="fixed 0.65 for an entropy-threshold breach",
+                ),
+            },
         )
 
     def _check_tunneling(
@@ -205,7 +219,20 @@ class DNSDetector(BaseDetector):
                 confidence=0.80,
                 confidence_rationale=f"Subdomain label length {len(subdomain)} > 50 characters.",
                 dedup_key=dedup_key,
-                extra={"domain": domain, "label_length": len(subdomain)},
+                extra={
+                    "domain": domain,
+                    "label_length": len(subdomain),
+                    "explanation": explain(
+                        Evidence(
+                            metric="subdomain_label_length",
+                            observed=len(subdomain),
+                            threshold=50,
+                            comparison=">",
+                            baseline="max plausible label length before tunneling is likely",
+                        ),
+                        confidence_basis="fixed 0.80 for an over-length subdomain label",
+                    ),
+                },
             )
 
         # Suspicious TXT query to unusual domain
@@ -226,7 +253,20 @@ class DNSDetector(BaseDetector):
                     confidence=0.55,
                     confidence_rationale="Long subdomain TXT query — consistent with DNS tunneling.",
                     dedup_key=dedup_key,
-                    extra={"domain": domain, "query_type": query_type},
+                    extra={
+                        "domain": domain,
+                        "query_type": query_type,
+                        "explanation": explain(
+                            Evidence(
+                                metric="txt_query_subdomain_length",
+                                observed=len(subdomain),
+                                threshold=20,
+                                comparison=">",
+                                baseline="long subdomain on a TXT query — a tunneling channel",
+                            ),
+                            confidence_basis="fixed 0.55 for a long-subdomain TXT query",
+                        ),
+                    },
                 )
 
         return None
@@ -264,7 +304,20 @@ class DNSDetector(BaseDetector):
             confidence=0.80,
             confidence_rationale=f"{len(recent)} NXDOMAIN in 60s from single host.",
             dedup_key=dedup_key,
-            extra={"nxdomain_count": len(recent), "unique_domains": len(unique_domains)},
+            extra={
+                "nxdomain_count": len(recent),
+                "unique_domains": len(unique_domains),
+                "explanation": explain(
+                    Evidence(
+                        metric="nxdomain_per_minute",
+                        observed=len(recent),
+                        threshold=20,
+                        comparison=">=",
+                        baseline="NXDOMAIN responses in 60s before DGA churn is likely",
+                    ),
+                    confidence_basis="fixed 0.80 once the NXDOMAIN-rate threshold is exceeded",
+                ),
+            },
         )
 
     def _check_dga_rate(self, src_ip: str, now: datetime) -> Optional[Alert]:
@@ -296,7 +349,19 @@ class DNSDetector(BaseDetector):
             confidence=0.70,
             confidence_rationale=f"{len(unique_domains)} unique domains in 60s.",
             dedup_key=dedup_key,
-            extra={"unique_domains_per_minute": len(unique_domains)},
+            extra={
+                "unique_domains_per_minute": len(unique_domains),
+                "explanation": explain(
+                    Evidence(
+                        metric="unique_domains_per_minute",
+                        observed=len(unique_domains),
+                        threshold=50,
+                        comparison=">=",
+                        baseline="unique domains queried in 60s before DGA cycling is likely",
+                    ),
+                    confidence_basis="fixed 0.70 once the unique-query-rate threshold is exceeded",
+                ),
+            },
         )
 
     def _suspicious_tld_alert(self, domain: str, src_ip: str, now: datetime) -> Alert:
@@ -313,7 +378,18 @@ class DNSDetector(BaseDetector):
             confidence=0.40,
             confidence_rationale="TLD associated with abuse; not observed before in baseline.",
             dedup_key=f"suspicious_tld:{domain}",
-            extra={"domain": domain},
+            extra={
+                "domain": domain,
+                "explanation": explain(
+                    Evidence(
+                        metric="tld",
+                        observed=domain.rsplit(".", 1)[-1] if "." in domain else domain,
+                        comparison="matches",
+                        baseline="TLDs frequently associated with abuse",
+                    ),
+                    confidence_basis="fixed 0.40 — suggestive TLD only, not conclusive",
+                ),
+            },
         )
 
     def _is_on_cooldown(self, key: str, now: datetime, seconds: int) -> bool:

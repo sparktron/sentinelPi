@@ -66,7 +66,10 @@ def test_alerts_on_new_port_once_established(config, db, baseline, device_tracke
     assert alerts[0].severity == Severity.MEDIUM
     assert alerts[0].category == AlertCategory.CONNECTION_ANOMALY
     assert alerts[0].affected_host == "192.168.1.50"
-    assert alerts[0].extra == {"dimension": "dst_port", "value": "445", "known": 3}
+    assert alerts[0].extra["dimension"] == "dst_port"
+    assert alerts[0].extra["value"] == "445"
+    assert alerts[0].extra["known"] == 3
+    assert alerts[0].extra["explanation"]["evidence"][0]["metric"] == "host_dst_port"
 
 
 def test_known_port_no_alert(config, db, baseline, device_tracker):
@@ -85,7 +88,10 @@ def test_alerts_on_new_internal_peer_once_established(config, db, baseline, devi
     assert len(alerts) == 1
     assert alerts[0].severity == Severity.MEDIUM
     assert alerts[0].related_host == "192.168.1.99"
-    assert alerts[0].extra == {"dimension": "peer", "value": "192.168.1.99", "known": 2}
+    assert alerts[0].extra["dimension"] == "peer"
+    assert alerts[0].extra["value"] == "192.168.1.99"
+    assert alerts[0].extra["known"] == 2
+    assert alerts[0].extra["explanation"]["evidence"][0]["metric"] == "host_peer"
 
 
 def test_external_peer_not_profiled(config, db, baseline, device_tracker):

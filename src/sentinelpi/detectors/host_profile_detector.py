@@ -30,7 +30,7 @@ from typing import Dict, List, Set, Tuple
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 
 logger = logging.getLogger(__name__)
 
@@ -138,5 +138,18 @@ class HostProfileDetector(BaseDetector):
             confidence=0.5,
             confidence_rationale=rationale,
             dedup_key=f"hostprofile:{dimension}:{src}:{value}",
-            extra={"dimension": dimension, "value": value, "known": known},
+            extra={
+                "dimension": dimension,
+                "value": value,
+                "known": known,
+                "explanation": explain(
+                    Evidence(
+                        metric=f"host_{dimension}",
+                        observed=value,
+                        comparison="not-in-profile",
+                        baseline=f"{known} {dimension} value(s) learned for this host",
+                    ),
+                    confidence_basis="fixed 0.5 for a first off-profile value on an established dimension",
+                ),
+            },
         )]

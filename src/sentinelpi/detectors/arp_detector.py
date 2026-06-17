@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Set
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedARP
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils.network import normalize_mac, mac_to_vendor
 
 logger = logging.getLogger(__name__)
@@ -169,7 +169,20 @@ class ARPDetector(BaseDetector):
             confidence=0.9,
             confidence_rationale="Direct observation of conflicting ARP replies for a known IP.",
             dedup_key=f"arp_conflict:{arp.src_ip}:{arp.src_mac}",
-            extra={"known_mac": known_mac, "new_mac": arp.src_mac, "is_gateway": is_gateway},
+            extra={
+                "known_mac": known_mac,
+                "new_mac": arp.src_mac,
+                "is_gateway": is_gateway,
+                "explanation": explain(
+                    Evidence(
+                        metric="arp_mac_for_ip",
+                        observed=arp.src_mac,
+                        comparison="conflicts-with",
+                        baseline=f"known MAC {known_mac} for {arp.src_ip}",
+                    ),
+                    confidence_basis="fixed 0.9 — direct observation of conflicting ARP replies",
+                ),
+            },
         )
 
     def _gateway_mac_change_alert(self, arp: CapturedARP, old_mac: str) -> Alert:
@@ -194,7 +207,19 @@ class ARPDetector(BaseDetector):
             confidence=0.95,
             confidence_rationale="Gateway MAC changed from previously observed stable value.",
             dedup_key=f"gateway_mac_change:{arp.src_ip}",
-            extra={"old_mac": old_mac, "new_mac": arp.src_mac},
+            extra={
+                "old_mac": old_mac,
+                "new_mac": arp.src_mac,
+                "explanation": explain(
+                    Evidence(
+                        metric="gateway_mac",
+                        observed=arp.src_mac,
+                        comparison="changed-from",
+                        baseline=f"previously stable gateway MAC {old_mac}",
+                    ),
+                    confidence_basis="fixed 0.95 — gateway MAC change is a strong spoofing signal",
+                ),
+            },
         )
 
     def _check_reply_flood(self, arp: CapturedARP) -> Optional[Alert]:
@@ -222,6 +247,18 @@ class ARPDetector(BaseDetector):
                 confidence=0.85,
                 confidence_rationale=f"{count} replies in 10 seconds from single MAC.",
                 dedup_key=f"arp_flood:{arp.src_mac}",
-                extra={"reply_count_10s": count},
+                extra={
+                    "reply_count_10s": count,
+                    "explanation": explain(
+                        Evidence(
+                            metric="arp_replies_10s",
+                            observed=count,
+                            threshold=20,
+                            comparison=">=",
+                            baseline="ARP replies from one MAC in 10s before flooding is likely",
+                        ),
+                        confidence_basis="fixed 0.85 once the reply-flood threshold is exceeded",
+                    ),
+                },
             )
         return None

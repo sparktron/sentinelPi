@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 from .base import BaseDetector
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +213,19 @@ class AuthLogDetector(BaseDetector):
                     confidence=1.0,
                     confidence_rationale="Direct observation in auth log.",
                     dedup_key=dedup_key,
-                    extra={"user": user, "log_line": line},
+                    extra={
+                        "user": user,
+                        "log_line": line,
+                        "explanation": explain(
+                            Evidence(
+                                metric="new_user_account",
+                                observed=user,
+                                comparison="created",
+                                baseline="useradd/new-user event in the auth log",
+                            ),
+                            confidence_basis="fixed 1.0 — direct observation in the auth log",
+                        ),
+                    },
                 ))
 
         return alerts
@@ -259,6 +271,19 @@ class AuthLogDetector(BaseDetector):
                 "failure_count": len(recent),
                 "window_seconds": self.config.thresholds.ssh_failures_window_seconds,
                 "last_user": user,
+                "explanation": explain(
+                    Evidence(
+                        metric="ssh_failures",
+                        observed=len(recent),
+                        threshold=self.config.thresholds.ssh_failures_threshold,
+                        comparison=">=",
+                        baseline=(
+                            f"failed SSH attempts allowed within "
+                            f"{self.config.thresholds.ssh_failures_window_seconds}s"
+                        ),
+                    ),
+                    confidence_basis="fixed 0.95 once the brute-force threshold is exceeded",
+                ),
             },
         )
 
@@ -299,7 +324,20 @@ class AuthLogDetector(BaseDetector):
             confidence=0.80,
             confidence_rationale="First successful SSH login from this source IP.",
             dedup_key=dedup_key,
-            extra={"user": user, "src_ip": src_ip, "country": country},
+            extra={
+                "user": user,
+                "src_ip": src_ip,
+                "country": country,
+                "explanation": explain(
+                    Evidence(
+                        metric="ssh_login_source",
+                        observed=f"{user}@{src_ip}{country_str}",
+                        comparison="first-seen",
+                        baseline="source IPs with a prior successful SSH login",
+                    ),
+                    confidence_basis="fixed 0.80 for a first successful login from a new source IP",
+                ),
+            },
         )
 
     def _sudo_sensitive_alert(self, command: str, now: datetime, raw_line: str) -> Optional[Alert]:
@@ -322,7 +360,18 @@ class AuthLogDetector(BaseDetector):
             confidence=0.70,
             confidence_rationale="Sensitive command in sudo audit log.",
             dedup_key=dedup_key,
-            extra={"command": command},
+            extra={
+                "command": command,
+                "explanation": explain(
+                    Evidence(
+                        metric="sudo_command",
+                        observed=command[:120],
+                        comparison="matches",
+                        baseline="sensitive-command set (shells, user mgmt, interpreters)",
+                    ),
+                    confidence_basis="fixed 0.70 for a sensitive sudo command",
+                ),
+            },
         )
 
     def _sudo_failure_alert(self, now: datetime, raw_line: str) -> Alert:
@@ -340,6 +389,17 @@ class AuthLogDetector(BaseDetector):
             confidence=0.60,
             confidence_rationale="Direct observation in auth log.",
             dedup_key=dedup_key,
+            extra={
+                "explanation": explain(
+                    Evidence(
+                        metric="sudo_auth",
+                        observed="failure",
+                        comparison="observed",
+                        baseline="failed sudo authentication event in the auth log",
+                    ),
+                    confidence_basis="fixed 0.60 — direct observation in the auth log",
+                ),
+            },
         )
 
     def _is_on_cooldown(self, key: str, now: datetime, seconds: int) -> bool:

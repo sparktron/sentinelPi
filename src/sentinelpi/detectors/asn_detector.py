@@ -20,7 +20,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils import clock, network
 from ..utils.asn import lookup_asn
 
@@ -112,7 +112,21 @@ class ASNReputationDetector(BaseDetector):
             confidence=0.55,
             confidence_rationale=reason,
             dedup_key=f"asn:{src}:{asn}",
-            extra={"asn": asn, "org": org, "dst_ip": dst, "reason": reason},
+            extra={
+                "asn": asn,
+                "org": org,
+                "dst_ip": dst,
+                "reason": reason,
+                "explanation": explain(
+                    Evidence(
+                        metric="destination_asn",
+                        observed=f"AS{asn} ({org_str})",
+                        comparison="matches",
+                        baseline="configured suspicious ASNs / org-name keywords",
+                    ),
+                    confidence_basis="fixed 0.55 for a flagged-network match",
+                ),
+            },
         )]
 
     def _on_cooldown(self, key: str) -> bool:

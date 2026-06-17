@@ -22,7 +22,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection
 from ..capture.proc_reader import read_tcp_connections
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +173,16 @@ class LateralMovementDetector(BaseDetector):
                 "target_count": len(unique_admin_targets),
                 "protocols": list(port_names),
                 "sample_targets": list(unique_admin_targets)[:5],
+                "explanation": explain(
+                    Evidence(
+                        metric="admin_targets_per_minute",
+                        observed=len(unique_admin_targets),
+                        threshold=threshold,
+                        comparison=">=",
+                        baseline="distinct internal admin-protocol targets reached within 60s",
+                    ),
+                    confidence_basis="fixed 0.80 once the admin-fanout threshold is exceeded",
+                ),
             },
         )
 
@@ -224,7 +234,19 @@ class LateralMovementDetector(BaseDetector):
             confidence=0.60,
             confidence_rationale="First time this (src→dst:admin_port) pair has been observed.",
             dedup_key=dedup_key,
-            extra={"protocol": protocol_name, "port": dst_port},
+            extra={
+                "protocol": protocol_name,
+                "port": dst_port,
+                "explanation": explain(
+                    Evidence(
+                        metric="admin_connection",
+                        observed=f"{src_ip} → {dst_ip}:{dst_port} ({protocol_name})",
+                        comparison="first-seen",
+                        baseline="known internal admin (src→dst:port) pairs from baseline",
+                    ),
+                    confidence_basis="fixed 0.60 for a first-seen internal admin connection",
+                ),
+            },
         )
 
     def _is_on_cooldown(self, key: str, now: datetime, seconds: int) -> bool:

@@ -202,13 +202,14 @@ Exit criteria:
 - Add adaptive thresholds per host/network so noisy networks can settle without global sensitivity
   changes.
 - ✅ Add explainability fields to alerts: which thresholds fired, what baseline was compared, and how
-  confidence was computed. _Shipped (2026-06-16): `models.Evidence` + `explain()` build a structured
-  `extra["explanation"]` payload (evidence list + `confidence_basis`). Wired into the core
-  threshold/baseline detectors — port scan, host sweep, connection spike, new destination, new
-  listening port, and beacon — and rendered as a collapsible "Why this fired" block on the dashboard.
-  It rides the existing `extra` bag, so it round-trips through the DB, collector ingest, and ECS SIEM
-  export with no schema change. Follow-up: extend the remaining detectors (DNS, lateral movement,
-  ARP, auth, geo/ASN, threat-intel, host-profile) beyond their plain confidence rationale._
+  confidence was computed. _Shipped (2026-06-16, detector coverage completed 2026-06-17):
+  `models.Evidence` + `explain()` build a structured `extra["explanation"]` payload (evidence list +
+  `confidence_basis`), now attached by **every** detector — port scan, host sweep, connection spike,
+  new destination, new listening port, beacon, DNS (entropy/tunneling/NXDOMAIN/DGA/TLD), lateral
+  movement, ARP (conflict/gateway-change/flood), auth log (brute force/new login/new user/sudo),
+  geo-country, ASN, threat-intel, host-profile, active-hours, and DoH/DoT. The dashboard renders it
+  as a collapsible "Why this fired" block. It rides the existing `extra` bag, so it round-trips
+  through the DB, collector ingest, and ECS SIEM export with no schema change._
 
 Exit criteria:
 - Incident alerts reduce duplicate alert noise while preserving raw alerts. _Met for the

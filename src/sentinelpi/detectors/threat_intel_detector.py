@@ -18,7 +18,7 @@ from typing import Dict, List
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection, CapturedDNS
 from ..intel.threat_feeds import Indicator, ThreatIntelService
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils import clock
 
 logger = logging.getLogger(__name__)
@@ -112,6 +112,15 @@ class ThreatIntelDetector(BaseDetector):
                 "indicator_kind": indicator.kind,
                 "source": indicator.source,
                 "category": indicator.category,
+                "explanation": explain(
+                    Evidence(
+                        metric=f"{indicator.kind}_indicator",
+                        observed=indicator.value,
+                        comparison="exact-match",
+                        baseline=f"{indicator.source} blocklist (category: {indicator.category})",
+                    ),
+                    confidence_basis="fixed 0.95 for an exact blocklist match (not heuristic)",
+                ),
             },
         )]
 

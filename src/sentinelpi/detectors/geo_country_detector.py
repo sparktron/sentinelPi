@@ -20,7 +20,7 @@ from typing import Callable, Dict, List, Optional, Set
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils import network
 from ..utils.geo import lookup_country, lookup_country_name
 
@@ -104,5 +104,18 @@ class GeoCountryDetector(BaseDetector):
             confidence=0.5,
             confidence_rationale=f"First observed connection from {src} to {country}.",
             dedup_key=f"newcountry:{src}:{country}",
-            extra={"country": country, "country_name": country_name, "dst_ip": dst},
+            extra={
+                "country": country,
+                "country_name": country_name,
+                "dst_ip": dst,
+                "explanation": explain(
+                    Evidence(
+                        metric="destination_country",
+                        observed=country,
+                        comparison="first-seen",
+                        baseline="set of countries this host has previously connected to",
+                    ),
+                    confidence_basis="fixed 0.5 for a first-seen destination country",
+                ),
+            },
         )]

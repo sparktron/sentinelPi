@@ -19,7 +19,7 @@ from typing import Dict, List, Set
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils import clock
 
 logger = logging.getLogger(__name__)
@@ -84,5 +84,17 @@ class ActiveHoursDetector(BaseDetector):
             confidence=0.5,
             confidence_rationale=f"First observed activity from {src} during hour {hour:02d}:00.",
             dedup_key=f"activehour:{src}:{hour}",
-            extra={"hour": hour, "known_hours": known_hours},
+            extra={
+                "hour": hour,
+                "known_hours": known_hours,
+                "explanation": explain(
+                    Evidence(
+                        metric="activity_hour",
+                        observed=f"{hour:02d}:00 UTC",
+                        comparison="not-in-profile",
+                        baseline=f"{known_hours} active hour(s) learned for this host",
+                    ),
+                    confidence_basis="fixed 0.5 for a first-seen activity hour on an established profile",
+                ),
+            },
         )]

@@ -26,7 +26,7 @@ from typing import Dict, List
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils import clock
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,23 @@ class DoHDetector(BaseDetector):
                 f"{mode} to {'a known resolver IP' if mode == 'DoH' else 'the dedicated DoT port 853'}."
             ),
             dedup_key=f"doh:{src}:{dst}",
-            extra={"mode": mode, "provider": provider, "resolver_ip": dst, "port": port},
+            extra={
+                "mode": mode,
+                "provider": provider,
+                "resolver_ip": dst,
+                "port": port,
+                "explanation": explain(
+                    Evidence(
+                        metric="encrypted_dns",
+                        observed=f"{mode} to {dst}:{port} ({provider})",
+                        comparison="not-in-baseline",
+                        baseline="configured resolver(s); doh_sanctioned_resolvers allowlist",
+                    ),
+                    confidence_basis=(
+                        "0.6 for DoH (known resolver IP), 0.75 for DoT (dedicated port 853)"
+                    ),
+                ),
+            },
         )]
 
     def _on_cooldown(self, key: str) -> bool:
