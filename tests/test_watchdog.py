@@ -136,3 +136,22 @@ def test_dashboard_status_includes_watchdog(
     data = resp.get_json()
     assert data["watchdog"]["enabled"] is True
     assert "capture_queue" in data["watchdog"]
+    # Compact health view drives the dashboard's degraded-health badge.
+    assert data["health"]["healthy"] is True
+    assert data["health"]["degraded"] == []
+
+
+def test_dashboard_status_health_flags_degraded(
+    config, db, device_tracker, baseline, alert_manager, tmp_path
+):
+    config.dashboard.access_token = "tok"
+    config.storage.db_path = str(tmp_path / "sentinelpi.db")
+    config.monitoring.self_monitoring_disk_free_min_mb = 10**12  # force low-disk
+    watchdog = _watchdog(config)
+    app = create_app(config, db, device_tracker, baseline, alert_manager, watchdog=watchdog)
+
+    resp = app.test_client().get("/api/status", headers={"Authorization": "Bearer tok"})
+
+    data = resp.get_json()
+    assert data["health"]["healthy"] is False
+    assert any("low disk" in d for d in data["health"]["degraded"])

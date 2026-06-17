@@ -510,6 +510,8 @@ def _status_payload(db, device_tracker, baseline, alert_manager, watchdog) -> di
         "baseline": baseline_summary,
         "alert_manager": manager_stats,
         "watchdog": watchdog.get_status() if watchdog is not None else None,
+        # Compact health view for the dashboard's degraded-health badge.
+        "health": _health_summary(watchdog),
     }
 
 
@@ -564,7 +566,9 @@ def _health_summary(watchdog) -> dict:
     if watchdog is None:
         return {"monitoring_enabled": False, "healthy": None, "degraded": []}
 
-    snap = watchdog.snapshot()
+    # Prefer the watchdog's last computed snapshot (cheap) on hot paths like the
+    # status poll; fall back to a fresh snapshot before the first check has run.
+    snap = watchdog.get_status() or watchdog.snapshot()
     degraded: list[str] = []
     if snap.get("dead_threads"):
         degraded.append("dead worker threads: " + ", ".join(snap["dead_threads"]))

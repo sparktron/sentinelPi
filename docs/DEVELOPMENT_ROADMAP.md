@@ -299,8 +299,10 @@ Exit criteria:
   the full SQLite database (learned DNS, destinations, active hours, countries, host profiles, and
   device inventory) for hardware replacement or SD-card recovery, with checksum/integrity
   verification and online (live-safe) snapshots.
-- **Dashboard live mode:** ✅ SSE status/alert/action refresh is shipped; follow-up is stale sensor
-  warnings and queue/degraded-health badges.
+- **Dashboard live mode:** ✅ SSE status/alert/action refresh is shipped, plus (2026-06-17) a
+  degraded-health badge in the status bar and a banner that lists what's wrong when the sensor is
+  degraded (dead threads, stale capture, queue saturation, low disk, threat-intel refresh problems).
+  The `/api/status` payload carries a compact `health` summary derived from the operational watchdog.
 
 ## Validation Performed
 

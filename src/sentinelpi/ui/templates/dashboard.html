@@ -64,6 +64,13 @@
   #status-bar { display: flex; gap: 1rem; font-size: 0.75rem; color: var(--muted); margin-bottom: 1rem; }
   .live-ok { color: var(--low); }
   .live-warn { color: var(--medium); }
+  .health-ok { color: var(--low); font-weight: 600; }
+  .health-bad { color: var(--high); font-weight: 600; }
+  .health-unknown { color: var(--muted); }
+  #health-banner { display: none; margin-bottom: 1rem; padding: 8px 12px; border-radius: 6px;
+    background: rgba(220, 38, 38, 0.12); border: 1px solid var(--high); color: var(--high);
+    font-size: 0.8rem; }
+  #health-banner ul { margin: 4px 0 0; padding-left: 18px; }
 </style>
 </head>
 <body>
@@ -77,8 +84,11 @@
   <span>Baseline: <span id="baseline-status">—</span></span>
   <span>Last update: <span id="last-update">—</span></span>
   <span>Updates: <span id="live-status" class="live-warn">Polling</span></span>
+  <span>Health: <span id="health-status" class="health-unknown">—</span></span>
   <span style="margin-left:auto"><a href="/logout" style="color:var(--muted)">Log out</a></span>
 </div>
+
+<div id="health-banner"></div>
 
 <!-- Summary Cards -->
 <div class="grid" id="summary-grid">
@@ -255,6 +265,33 @@ function applyStatus(data) {
     ? `Learning (${Math.ceil(bl.learning_hours_remaining || 0)}h remaining)`
     : `Active (${bl.known_domains || 0} domains, ${bl.known_destinations || 0} dests)`;
   document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+  applyHealth(data.health);
+}
+
+// Surface the operational watchdog's health: a status-bar badge plus, when the
+// sensor itself is degraded, a banner listing what's wrong (dead threads, stale
+// capture, queue saturation, low disk, threat-intel refresh problems).
+function applyHealth(health) {
+  const badge = document.getElementById('health-status');
+  const banner = document.getElementById('health-banner');
+  if (!health || health.healthy === null || health.monitoring_enabled === false) {
+    badge.textContent = health && health.monitoring_enabled === false ? 'monitoring off' : '—';
+    badge.className = 'health-unknown';
+    banner.style.display = 'none';
+    return;
+  }
+  const degraded = Array.isArray(health.degraded) ? health.degraded : [];
+  if (health.healthy && !degraded.length) {
+    badge.textContent = 'Healthy';
+    badge.className = 'health-ok';
+    banner.style.display = 'none';
+  } else {
+    badge.textContent = `Degraded (${degraded.length})`;
+    badge.className = 'health-bad';
+    banner.innerHTML = '<strong>⚠ Sensor health degraded</strong><ul>'
+      + degraded.map(d => `<li>${esc(d)}</li>`).join('') + '</ul>';
+    banner.style.display = 'block';
+  }
 }
 
 async function loadStatus() {
