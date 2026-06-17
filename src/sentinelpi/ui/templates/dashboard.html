@@ -52,6 +52,14 @@
   .tl-time { color: var(--muted); white-space: nowrap; }
   .tl-cat { color: var(--text); font-family: monospace; }
   .tl-title { color: var(--muted); }
+  .why { margin-top: 6px; font-size: 0.72rem; }
+  .why summary { cursor: pointer; color: var(--medium); font-weight: 600; }
+  .why-list { list-style: none; margin: 6px 0 2px; padding: 0 0 0 10px; border-left: 2px solid var(--border); }
+  .why-row { padding: 3px 0; }
+  .why-metric { font-family: monospace; color: var(--text); }
+  .why-cmp { color: var(--muted); }
+  .why-base { color: var(--muted); display: block; }
+  .why-conf { color: var(--muted); margin-top: 4px; font-style: italic; }
   .refresh-note { font-size: 0.7rem; color: var(--muted); }
   #status-bar { display: flex; gap: 1rem; font-size: 0.75rem; color: var(--muted); margin-bottom: 1rem; }
   .live-ok { color: var(--low); }
@@ -198,6 +206,31 @@ function incidentTimeline(timeline) {
     </details>`;
 }
 
+// Render structured explainability: which signal/threshold fired, what baseline
+// it was compared to, and how confidence was derived. Falls back to the plain
+// confidence rationale text when no structured explanation is present.
+function alertExplanation(explanation, rationale) {
+  const ev = explanation && Array.isArray(explanation.evidence) ? explanation.evidence : [];
+  if (!ev.length && !rationale) return '';
+  const rows = ev.map(e => {
+    const cmp = e.comparison ? ` <span class="why-cmp">${esc(e.comparison)}</span> ` : ' ';
+    const thr = (e.threshold !== undefined && e.threshold !== null) ? esc(String(e.threshold)) : '';
+    const base = e.baseline ? `<span class="why-base">vs ${esc(e.baseline)}</span>` : '';
+    return `<li class="why-row">
+        <span class="why-metric">${esc(e.metric)}</span> = ${esc(String(e.observed))}${cmp}${thr}
+        ${base}
+      </li>`;
+  }).join('');
+  const basis = (explanation && explanation.confidence_basis) || rationale || '';
+  const confLine = basis ? `<div class="why-conf">Confidence: ${esc(basis)}</div>` : '';
+  const summary = ev.length ? `Why this fired (${ev.length})` : 'Why this fired';
+  return `<details class="why">
+      <summary>${summary}</summary>
+      ${ev.length ? `<ul class="why-list">${rows}</ul>` : ''}
+      ${confLine}
+    </details>`;
+}
+
 // Single fetch wrapper: if the session cookie has expired the server returns
 // 401, so bounce to the login page instead of silently showing stale data.
 async function apiFetch(url, opts) {
@@ -261,6 +294,7 @@ async function loadAlerts() {
           <div class="description">${esc(a.description)}</div>
           ${a.recommended_action ? `<div class="rec">→ ${esc(a.recommended_action)}</div>` : ''}
           ${incidentTimeline(a.timeline)}
+          ${alertExplanation(a.explanation, a.confidence_rationale)}
         </td>
         <td>${Math.round(a.confidence * 100)}%</td>
         <td>

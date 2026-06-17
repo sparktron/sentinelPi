@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +176,16 @@ class PortScanDetector(BaseDetector):
                 "unique_ports_count": len(unique_ports),
                 "sample_ports": sample_ports,
                 "window_seconds": self.WINDOW_SECONDS,
+                "explanation": explain(
+                    Evidence(
+                        metric="unique_ports",
+                        observed=len(unique_ports),
+                        threshold=threshold,
+                        comparison=">=",
+                        baseline=f"port-scan limit over a {self.WINDOW_SECONDS}s window",
+                    ),
+                    confidence_basis="fixed 0.9 once the per-window port threshold is exceeded",
+                ),
             },
         )
 
@@ -218,7 +228,20 @@ class PortScanDetector(BaseDetector):
             confidence=0.8,
             confidence_rationale=f"{len(local_hosts)} unique local hosts in {self.WINDOW_SECONDS}s.",
             dedup_key=dedup_key,
-            extra={"unique_hosts": len(local_hosts), "src_ip": src_ip},
+            extra={
+                "unique_hosts": len(local_hosts),
+                "src_ip": src_ip,
+                "explanation": explain(
+                    Evidence(
+                        metric="unique_local_hosts",
+                        observed=len(local_hosts),
+                        threshold=15,
+                        comparison=">=",
+                        baseline=f"host-sweep limit over a {self.WINDOW_SECONDS}s window",
+                    ),
+                    confidence_basis="fixed 0.8 once the unique-local-host threshold is exceeded",
+                ),
+            },
         )
 
     def _is_on_cooldown(self, key: str, now: datetime, cooldown_seconds: int = 300) -> bool:

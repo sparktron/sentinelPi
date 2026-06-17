@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from .utils import clock
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 
 class Severity(str, Enum):
@@ -136,6 +136,47 @@ def alert_from_dict(data: dict) -> Alert:
         dedup_key=data.get("dedup_key", "") or "",
         extra=dict(data.get("extra") or {}),
     )
+
+
+@dataclass
+class Evidence:
+    """
+    One structured reason an alert fired: a measured signal compared against an
+    expectation.
+
+    Powers alert explainability — together these answer "which threshold fired,
+    what baseline was it compared to?" so operators and the dashboard can see
+    *why* an alert was raised without re-reading detector source.
+    """
+    metric: str                  # what was measured, e.g. "unique_ports"
+    observed: Any                # the value observed
+    threshold: Any = None        # the limit/threshold crossed, if any
+    comparison: str = ""         # e.g. ">=", ">", "first-seen", "not-in-baseline"
+    baseline: str = ""           # human-readable description of the expectation
+
+    def to_dict(self) -> dict:
+        d: dict = {"metric": self.metric, "observed": self.observed}
+        if self.threshold is not None:
+            d["threshold"] = self.threshold
+        if self.comparison:
+            d["comparison"] = self.comparison
+        if self.baseline:
+            d["baseline"] = self.baseline
+        return d
+
+
+def explain(*evidence: Evidence, confidence_basis: str = "") -> dict:
+    """
+    Build the structured payload stored at ``Alert.extra['explanation']``.
+
+    Records which signals/thresholds fired and how confidence was derived, so an
+    alert is self-explaining wherever ``extra`` already flows — the database,
+    the dashboard, and ECS SIEM exports.
+    """
+    payload: dict = {"evidence": [e.to_dict() for e in evidence]}
+    if confidence_basis:
+        payload["confidence_basis"] = confidence_basis
+    return payload
 
 
 @dataclass

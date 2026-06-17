@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Set
 
 from .base import BaseDetector
 from ..capture.proc_reader import ProcConnection, read_tcp_connections, read_listening_ports
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils.network import is_private_ip
 from ..utils.geo import lookup_country
 
@@ -146,7 +146,24 @@ class ConnectionDetector(BaseDetector):
             confidence=min(0.95, 0.5 + z_score * 0.1),
             confidence_rationale=f"Z-score of {z_score:.2f} above baseline for this hour/day.",
             dedup_key=dedup_key,
-            extra={"connection_count": count, "z_score": round(z_score, 2)},
+            extra={
+                "connection_count": count,
+                "z_score": round(z_score, 2),
+                "explanation": explain(
+                    Evidence(
+                        metric="active_connections",
+                        observed=count,
+                        comparison=">",
+                        baseline="per-host mean active connections for this hour-of-day/day-of-week",
+                    ),
+                    Evidence(
+                        metric="z_score",
+                        observed=round(z_score, 2),
+                        baseline="standard deviations above that hourly baseline",
+                    ),
+                    confidence_basis="0.5 + 0.1*z_score, capped at 0.95",
+                ),
+            },
         )
 
     def _new_destination_alert(self, conn: "ProcConnection", now: datetime) -> Optional[Alert]:
@@ -198,6 +215,15 @@ class ConnectionDetector(BaseDetector):
                 "protocol": conn.protocol,
                 "process": conn.process_name,
                 "country": country,
+                "explanation": explain(
+                    Evidence(
+                        metric="destination",
+                        observed=f"{conn.remote_ip}:{conn.remote_port}/{conn.protocol}",
+                        comparison="first-seen",
+                        baseline="set of (src->dst:port) destinations seen before for this host",
+                    ),
+                    confidence_basis="fixed 0.6 for a first-seen external destination",
+                ),
             },
         )
 
@@ -254,6 +280,15 @@ class ConnectionDetector(BaseDetector):
                 "process": conn.process_name,
                 "pid": conn.pid,
                 "all_interfaces": is_all_interfaces,
+                "explanation": explain(
+                    Evidence(
+                        metric="listening_port",
+                        observed=f"{conn.local_port}/{conn.protocol}",
+                        comparison="not-in-baseline",
+                        baseline="ports listening at initialization",
+                    ),
+                    confidence_basis="fixed 0.85 for a port absent from the startup baseline",
+                ),
             },
         )
 

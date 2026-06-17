@@ -201,8 +201,14 @@ Exit criteria:
 - Extend per-host profiles further with byte ranges and protocol mix.
 - Add adaptive thresholds per host/network so noisy networks can settle without global sensitivity
   changes.
-- Add explainability fields to alerts: which thresholds fired, what baseline was compared, and how
-  confidence was computed.
+- ✅ Add explainability fields to alerts: which thresholds fired, what baseline was compared, and how
+  confidence was computed. _Shipped (2026-06-16): `models.Evidence` + `explain()` build a structured
+  `extra["explanation"]` payload (evidence list + `confidence_basis`). Wired into the core
+  threshold/baseline detectors — port scan, host sweep, connection spike, new destination, new
+  listening port, and beacon — and rendered as a collapsible "Why this fired" block on the dashboard.
+  It rides the existing `extra` bag, so it round-trips through the DB, collector ingest, and ECS SIEM
+  export with no schema change. Follow-up: extend the remaining detectors (DNS, lateral movement,
+  ARP, auth, geo/ASN, threat-intel, host-profile) beyond their plain confidence rationale._
 
 Exit criteria:
 - Incident alerts reduce duplicate alert noise while preserving raw alerts. _Met for the

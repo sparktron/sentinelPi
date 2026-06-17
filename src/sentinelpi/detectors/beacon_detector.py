@@ -33,7 +33,7 @@ from typing import Dict, List, Tuple
 
 from .base import BaseDetector
 from ..capture.packet_capture import CapturedConnection
-from ..models import Alert, AlertCategory, Severity
+from ..models import Alert, AlertCategory, Evidence, Severity, explain
 from ..utils.network import is_private_ip
 
 logger = logging.getLogger(__name__)
@@ -225,6 +225,24 @@ class BeaconDetector(BaseDetector):
                 "interval_count": len(intervals),
                 "min_interval": round(min(intervals), 2),
                 "max_interval": round(max(intervals), 2),
+                "explanation": explain(
+                    Evidence(
+                        metric="coefficient_of_variation",
+                        observed=round(cv, 4),
+                        threshold=threshold,
+                        comparison="<=",
+                        baseline="interval regularity below this CV looks machine-timed",
+                    ),
+                    Evidence(
+                        metric="intervals_analyzed",
+                        observed=len(intervals),
+                        baseline=f"mean interval {mean_interval:.1f}s across observed connections",
+                    ),
+                    confidence_basis=(
+                        "severity-tier base confidence by CV band, reduced 0.15 if the "
+                        "destination is already a known baseline destination"
+                    ),
+                ),
             },
         )]
 

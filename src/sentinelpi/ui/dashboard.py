@@ -488,6 +488,10 @@ def _alert_to_dict(alert) -> dict:
         # Single-host incident engine attaches an ordered event timeline; the
         # dashboard renders it inline so an INCIDENT reads as a story, not a row.
         "timeline": alert.extra.get("timeline"),
+        # Structured explainability: which signal/threshold fired, what baseline
+        # it was compared to, and how confidence was derived.
+        "explanation": alert.extra.get("explanation"),
+        "confidence_rationale": alert.confidence_rationale,
     }
 
 
