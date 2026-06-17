@@ -452,7 +452,7 @@ def create_app(
     @app.route("/api/report/daily")
     @require_token
     def api_daily_report():
-        return jsonify(_generate_daily_report(db, device_tracker, baseline))
+        return jsonify(_generate_daily_report(db, device_tracker, baseline, watchdog))
 
     # ------------------------------------------------------------------
     # Error handlers
@@ -554,7 +554,48 @@ def _profile_sort_key(value: str) -> tuple[int, Any]:
         return (1, value)
 
 
-def _generate_daily_report(db, device_tracker, baseline) -> dict:
+def _health_summary(watchdog) -> dict:
+    """
+    Condense the operational watchdog's snapshot into a daily-report health
+    block: an overall flag plus a plain-English list of anything degraded, so a
+    daily report answers "was the sensor itself healthy?" not just "what did it
+    see?".
+    """
+    if watchdog is None:
+        return {"monitoring_enabled": False, "healthy": None, "degraded": []}
+
+    snap = watchdog.snapshot()
+    degraded: list[str] = []
+    if snap.get("dead_threads"):
+        degraded.append("dead worker threads: " + ", ".join(snap["dead_threads"]))
+    queue = snap.get("capture_queue", {})
+    if queue.get("usage_ratio", 0) >= queue.get("warn_ratio", 1):
+        degraded.append(f"capture queue at {queue['usage_ratio']:.0%} of capacity")
+    disk = snap.get("disk", {})
+    if disk and disk.get("free_mb", 0) < disk.get("min_free_mb", 0):
+        degraded.append(f"low disk: {disk.get('free_mb')} MB free")
+    if snap.get("capture", {}).get("stale"):
+        degraded.append("packet/flow capture is stale")
+    ti = snap.get("threat_intel", {})
+    if ti.get("stale"):
+        degraded.append("threat-intel feed is stale")
+    if ti.get("last_error"):
+        degraded.append(f"threat-intel refresh error: {ti['last_error']}")
+
+    return {
+        "monitoring_enabled": snap.get("enabled", False),
+        "healthy": snap.get("healthy"),
+        "degraded": degraded,
+        "dead_threads": snap.get("dead_threads", []),
+        "capture_queue_usage_ratio": queue.get("usage_ratio"),
+        "disk_free_mb": disk.get("free_mb"),
+        "capture_stale": snap.get("capture", {}).get("stale"),
+        "threat_intel_stale": ti.get("stale"),
+        "threat_intel_last_error": ti.get("last_error"),
+    }
+
+
+def _generate_daily_report(db, device_tracker, baseline, watchdog=None) -> dict:
     """Generate a daily summary report."""
     now = clock.now()
     since = now - timedelta(hours=24)
@@ -592,6 +633,7 @@ def _generate_daily_report(db, device_tracker, baseline) -> dict:
         "top_alerting_hosts": [{"host": h, "count": c} for h, c in top_hosts],
         "total_known_devices": len(devices),
         "baseline_summary": baseline.get_summary(),
+        "health": _health_summary(watchdog),
     }
 
 
