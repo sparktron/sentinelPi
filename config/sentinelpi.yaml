@@ -119,6 +119,16 @@ monitoring:
   host_profile_min_known_protocols: 2   # require this many protocols before flagging a new one
   host_profile_min_known_byte_ranges: 3 # transfer-size buckets before flagging a new one (NetFlow only)
 
+  # Adaptive per-host thresholds: a host that keeps tripping the same rate signal
+  # (port scan, host sweep, DNS NXDOMAIN/DGA, lateral fanout) gets a higher
+  # effective bar so a chronically noisy host stops flooding alerts — while quiet
+  # hosts keep full sensitivity. The bar decays back as the host goes quiet.
+  adaptive_thresholds_enabled: true
+  adaptive_threshold_trips_before_backoff: 5   # trips within the window before the bar rises
+  adaptive_threshold_window_seconds: 3600      # sliding window for counting trips
+  adaptive_threshold_step: 0.5                 # multiplier added per extra trip
+  adaptive_threshold_max_multiplier: 4.0       # cap on the backoff multiplier
+
   # Honeypot / canary ports: open fake services; ANY connection is high-fidelity
   # evidence of internal scanning -> HIGH alert. Ports < 1024 need root to bind.
   honeypot_enabled: false

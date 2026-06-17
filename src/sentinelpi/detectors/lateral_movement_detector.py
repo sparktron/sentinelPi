@@ -139,12 +139,14 @@ class LateralMovementDetector(BaseDetector):
                    if t > cutoff and port in ADMIN_PORTS]
 
         unique_admin_targets = {dst for _, dst, _ in entries}
-        threshold = self.config.thresholds.lateral_movement_dest_threshold
+        base_threshold = self.config.thresholds.lateral_movement_dest_threshold
+        threshold = self._adaptive.effective("lateral_fanout", src_ip, base_threshold, now)
 
         if len(unique_admin_targets) < threshold:
             return None
 
         self._last_alert[dedup_key] = now
+        self._adaptive.record_trip("lateral_fanout", src_ip, now)
         port_names = {ADMIN_PORTS[p] for _, _, p in entries if p in ADMIN_PORTS}
 
         return Alert(
@@ -166,7 +168,7 @@ class LateralMovementDetector(BaseDetector):
             confidence=0.80,
             confidence_rationale=(
                 f"{len(unique_admin_targets)} unique admin targets in 60s "
-                f"(threshold: {threshold})."
+                f"(threshold: {threshold:g})."
             ),
             dedup_key=dedup_key,
             extra={
@@ -177,9 +179,12 @@ class LateralMovementDetector(BaseDetector):
                     Evidence(
                         metric="admin_targets_per_minute",
                         observed=len(unique_admin_targets),
-                        threshold=threshold,
+                        threshold=round(threshold, 1),
                         comparison=">=",
-                        baseline="distinct internal admin-protocol targets reached within 60s",
+                        baseline=(
+                            "distinct internal admin-protocol targets reached within 60s"
+                            + (f" (adaptive, base {base_threshold})" if threshold > base_threshold else "")
+                        ),
                     ),
                     confidence_basis="fixed 0.80 once the admin-fanout threshold is exceeded",
                 ),

@@ -229,6 +229,17 @@ class MonitoringConfig:
     # learned when a flow source supplies byte counts (e.g. NetFlow).
     host_profile_min_known_byte_ranges: int = 3
 
+    # Adaptive per-host thresholds: a host that keeps tripping the same rate
+    # signal is treated as chronically noisy and its effective threshold is
+    # scaled up (capped), decaying back as it goes quiet. Never drops below the
+    # global threshold, so quiet hosts keep full sensitivity. Lets a noisy
+    # network settle without lowering global sensitivity for everyone.
+    adaptive_thresholds_enabled: bool = True
+    adaptive_threshold_trips_before_backoff: int = 5   # trips in-window before backoff starts
+    adaptive_threshold_window_seconds: int = 3600      # sliding window for counting trips
+    adaptive_threshold_step: float = 0.5               # multiplier added per extra trip
+    adaptive_threshold_max_multiplier: float = 4.0     # cap on the backoff multiplier
+
     # DHCP lease ingestion for authoritative device identity (names from the
     # router/DHCP server beat ARP-inferred / reverse-DNS guesses).
     dhcp_leases_enabled: bool = False
@@ -643,6 +654,18 @@ def validate_config(config: Config) -> List[ConfigIssue]:
                            config.monitoring.host_profile_min_known_protocols)
     check_non_negative_int("monitoring.host_profile_min_known_byte_ranges",
                            config.monitoring.host_profile_min_known_byte_ranges)
+    check_non_negative_int("monitoring.adaptive_threshold_trips_before_backoff",
+                           config.monitoring.adaptive_threshold_trips_before_backoff)
+    check_positive_number("monitoring.adaptive_threshold_window_seconds",
+                          config.monitoring.adaptive_threshold_window_seconds)
+    check_positive_number("monitoring.adaptive_threshold_step",
+                          config.monitoring.adaptive_threshold_step)
+    if (
+        isinstance(config.monitoring.adaptive_threshold_max_multiplier, bool)
+        or not isinstance(config.monitoring.adaptive_threshold_max_multiplier, (int, float))
+        or config.monitoring.adaptive_threshold_max_multiplier < 1
+    ):
+        add("monitoring.adaptive_threshold_max_multiplier", "must be a number >= 1")
     check_non_negative_int("monitoring.self_monitoring_interval_seconds",
                            config.monitoring.self_monitoring_interval_seconds)
     check_positive_number("monitoring.self_monitoring_queue_warn_ratio",

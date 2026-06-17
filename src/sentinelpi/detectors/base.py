@@ -61,6 +61,10 @@ class BaseDetector(ABC):
         self.db = db
         self.baseline = baseline
         self.device_tracker = device_tracker
+        # Per-host adaptive threshold backoff, shared params from config (each
+        # detector keeps its own trip state, keyed by its own signal names).
+        from .adaptive import AdaptiveThresholds
+        self._adaptive = AdaptiveThresholds.from_config(config)
         self.logger = logging.getLogger(self.__class__.__module__ + "." + self.__class__.__name__)
         # Serializes process_event() and poll() so detector state is never
         # mutated from two threads at once. Reentrant so a hook may call the

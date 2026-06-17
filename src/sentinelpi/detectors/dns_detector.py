@@ -280,10 +280,13 @@ class DNSDetector(BaseDetector):
         cutoff = now - timedelta(seconds=60)
         recent = [(t, d) for t, d in self._nxdomain_times[src_ip] if t > cutoff]
 
-        if len(recent) < 20:  # Threshold: 20 NXDOMAIN in 60 seconds
+        nx_base = 20  # Threshold: 20 NXDOMAIN in 60 seconds
+        nx_threshold = self._adaptive.effective("dns_nxdomain", src_ip, nx_base, now)
+        if len(recent) < nx_threshold:
             return None
 
         self._last_alert[dedup_key] = now
+        self._adaptive.record_trip("dns_nxdomain", src_ip, now)
         unique_domains = {d for _, d in recent}
 
         return Alert(
@@ -311,9 +314,12 @@ class DNSDetector(BaseDetector):
                     Evidence(
                         metric="nxdomain_per_minute",
                         observed=len(recent),
-                        threshold=20,
+                        threshold=round(nx_threshold, 1),
                         comparison=">=",
-                        baseline="NXDOMAIN responses in 60s before DGA churn is likely",
+                        baseline=(
+                            "NXDOMAIN responses in 60s before DGA churn is likely"
+                            + (f" (adaptive, base {nx_base})" if nx_threshold > nx_base else "")
+                        ),
                     ),
                     confidence_basis="fixed 0.80 once the NXDOMAIN-rate threshold is exceeded",
                 ),
@@ -330,10 +336,13 @@ class DNSDetector(BaseDetector):
         recent = [(t, d) for t, d in self._query_times[src_ip] if t > cutoff]
         unique_domains = {d for _, d in recent}
 
-        if len(unique_domains) < 50:
+        dga_base = 50
+        dga_threshold = self._adaptive.effective("dns_dga", src_ip, dga_base, now)
+        if len(unique_domains) < dga_threshold:
             return None
 
         self._last_alert[dedup_key] = now
+        self._adaptive.record_trip("dns_dga", src_ip, now)
 
         return Alert(
             severity=Severity.MEDIUM,
@@ -355,9 +364,12 @@ class DNSDetector(BaseDetector):
                     Evidence(
                         metric="unique_domains_per_minute",
                         observed=len(unique_domains),
-                        threshold=50,
+                        threshold=round(dga_threshold, 1),
                         comparison=">=",
-                        baseline="unique domains queried in 60s before DGA cycling is likely",
+                        baseline=(
+                            "unique domains queried in 60s before DGA cycling is likely"
+                            + (f" (adaptive, base {dga_base})" if dga_threshold > dga_base else "")
+                        ),
                     ),
                     confidence_basis="fixed 0.70 once the unique-query-rate threshold is exceeded",
                 ),

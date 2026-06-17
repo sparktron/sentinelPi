@@ -203,8 +203,13 @@ Exit criteria:
   change) — `protocol` (tcp/udp/icmp first-seen once established) and `byte_range` (per-flow size
   buckets, learned only when a flow source supplies byte counts, e.g. NetFlow). Both carry structured
   explainability and are gated by `host_profile_min_known_protocols` / `_byte_ranges`._
-- Add adaptive thresholds per host/network so noisy networks can settle without global sensitivity
-  changes.
+- ✅ Add adaptive thresholds per host/network so noisy networks can settle without global sensitivity
+  changes. _Shipped (2026-06-17): `detectors/adaptive.py` `AdaptiveThresholds` applies a per-(signal,
+  host) multiplicative backoff — a host that keeps tripping the same rate signal gets a higher
+  effective bar (capped), decaying back via a sliding window as it goes quiet, and never below the
+  global threshold so quiet hosts stay fully sensitive. Wired into the rate detectors (port scan,
+  host sweep, DNS NXDOMAIN/DGA rate, lateral-movement fanout); fully config-driven
+  (`adaptive_threshold_*`) and surfaced in the alert's explainability when in effect._
 - ✅ Add explainability fields to alerts: which thresholds fired, what baseline was compared, and how
   confidence was computed. _Shipped (2026-06-16, detector coverage completed 2026-06-17):
   `models.Evidence` + `explain()` build a structured `extra["explanation"]` payload (evidence list +
@@ -215,12 +220,19 @@ Exit criteria:
   as a collapsible "Why this fired" block. It rides the existing `extra` bag, so it round-trips
   through the DB, collector ingest, and ECS SIEM export with no schema change._
 
+Status: complete as of 2026-06-17. All five tracks shipped — incident engine,
+per-host profiles (ports/peers/protocol/byte-range), alert explainability across every detector, and
+per-host adaptive thresholds.
+
 Exit criteria:
-- Incident alerts reduce duplicate alert noise while preserving raw alerts. _Met for the
-  single-host sequence path; the dashboard now renders the incident timeline inline (2026-06-10)._
-- ✅ Per-host profile tables are migrated and restart-safe for port/internal-peer dimensions.
+- ✅ Incident alerts reduce duplicate alert noise while preserving raw alerts. _Met for the
+  single-host sequence path; the dashboard renders the incident timeline inline (2026-06-10), and
+  adaptive per-host thresholds (2026-06-17) further cut repeat noise from chatty hosts._
+- ✅ Per-host profile tables are migrated and restart-safe for port/internal-peer dimensions
+  (protocol and byte-range dimensions share the same restart-safe store).
 - ✅ Dashboard can show incident timeline and contributing evidence. _Shipped (2026-06-10): the
-  alerts table renders `extra["timeline"]` as a collapsible per-incident event list._
+  alerts table renders `extra["timeline"]` as a collapsible per-incident event list, plus a
+  per-alert "Why this fired" explainability block (2026-06-16/17)._
 
 ### Phase 4: Usability And Integrations
 

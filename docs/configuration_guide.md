@@ -83,6 +83,18 @@ established (`host_profile_min_known_ports`, `_peers`, `_protocols`,
 `_byte_ranges`). Byte-range profiling needs a flow source that reports byte
 counts (NetFlow); under SYN-only capture or conntrack it stays dormant.
 
+`adaptive_thresholds_enabled` makes rate-based detectors (port scan, host sweep,
+DNS NXDOMAIN/DGA rate, lateral-movement fanout) self-tune per host. A host that
+keeps tripping the same signal is treated as chronically noisy: its effective
+threshold is scaled up (by `adaptive_threshold_step` per extra trip beyond
+`adaptive_threshold_trips_before_backoff`, capped at
+`adaptive_threshold_max_multiplier`) so it must clear a higher bar. Trips age out
+of `adaptive_threshold_window_seconds`, so the bar decays back once the host goes
+quiet. The bar is never lowered below the global threshold, so quiet hosts keep
+full sensitivity — this lets a noisy network settle without you dulling
+sensitivity for everyone. When an adaptive bar is in effect, the alert's "Why
+this fired" explanation shows the raised threshold and its base value.
+
 ### Self-Monitoring Watchdog
 
 The watchdog raises `SYSTEM` alerts when SentinelPi's own runtime health degrades:

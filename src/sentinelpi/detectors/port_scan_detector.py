@@ -133,11 +133,13 @@ class PortScanDetector(BaseDetector):
         recent = [(t, p) for t, p in entries if t > cutoff]
         unique_ports = {p for _, p in recent}
 
-        threshold = self.config.thresholds.port_scan_ports_per_minute
+        base_threshold = self.config.thresholds.port_scan_ports_per_minute
+        threshold = self._adaptive.effective("port_scan", src_ip, base_threshold, now)
         if len(unique_ports) < threshold:
             return None
 
         self._last_alert[dedup_key] = now
+        self._adaptive.record_trip("port_scan", src_ip, now)
 
         # Classify severity by scan breadth
         if len(unique_ports) >= 100:
@@ -180,9 +182,12 @@ class PortScanDetector(BaseDetector):
                     Evidence(
                         metric="unique_ports",
                         observed=len(unique_ports),
-                        threshold=threshold,
+                        threshold=round(threshold, 1),
                         comparison=">=",
-                        baseline=f"port-scan limit over a {self.WINDOW_SECONDS}s window",
+                        baseline=(
+                            f"port-scan limit over a {self.WINDOW_SECONDS}s window"
+                            + (f" (adaptive, base {base_threshold})" if threshold > base_threshold else "")
+                        ),
                     ),
                     confidence_basis="fixed 0.9 once the per-window port threshold is exceeded",
                 ),
@@ -205,10 +210,13 @@ class PortScanDetector(BaseDetector):
         local_hosts = {ip for ip in unique_hosts if self._is_local_ip(ip)}
 
         # Threshold: >15 unique local hosts in 60s is suspicious
-        if len(local_hosts) < 15:
+        sweep_base = 15
+        sweep_threshold = self._adaptive.effective("host_sweep", src_ip, sweep_base, now)
+        if len(local_hosts) < sweep_threshold:
             return None
 
         self._last_alert[dedup_key] = now
+        self._adaptive.record_trip("host_sweep", src_ip, now)
 
         return Alert(
             severity=Severity.MEDIUM,
@@ -235,9 +243,12 @@ class PortScanDetector(BaseDetector):
                     Evidence(
                         metric="unique_local_hosts",
                         observed=len(local_hosts),
-                        threshold=15,
+                        threshold=round(sweep_threshold, 1),
                         comparison=">=",
-                        baseline=f"host-sweep limit over a {self.WINDOW_SECONDS}s window",
+                        baseline=(
+                            f"host-sweep limit over a {self.WINDOW_SECONDS}s window"
+                            + (f" (adaptive, base {sweep_base})" if sweep_threshold > sweep_base else "")
+                        ),
                     ),
                     confidence_basis="fixed 0.8 once the unique-local-host threshold is exceeded",
                 ),
