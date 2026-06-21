@@ -329,10 +329,13 @@ started. They are infrastructure/operations work rather than detection features.
   informational. Pick a baseline threshold from the current measured coverage and fail the build
   below it (`pytest --cov-fail-under=N`), so the test investment can't silently erode. Raise the
   threshold opportunistically as coverage improves.
-- **Turnkey deployment packaging.** Make the Pi deployment story self-contained: a `systemd` service
-  unit (with the right capabilities/hardening for packet capture) and an install script, and/or a
-  container image. Goal is "install, drop in a config, start the service" without manual venv/EUID
-  fiddling. Pairs naturally with the v1.0.0 release.
+- ✅ **Turnkey deployment packaging.** _Shipped (2026-06-17): the systemd path was already in place
+  (hardened `systemd/sentinelpi.service` + `scripts/install.sh`); added `scripts/uninstall.sh` for
+  clean teardown, plus a containerized path — a multi-stage `Dockerfile` (slim image, non-root
+  `sentinelpi` user, packaged templates, `HEALTHCHECK`), `.dockerignore`, and a `docker-compose.yml`
+  using host networking + `NET_RAW`/`NET_ADMIN` so the non-root process can capture without root.
+  Verified: image builds, runs as non-root, `--check-config`/`--version` work, and the daemon boots
+  with the dashboard serving (auth enforced). README documents both paths._
 
 ## Validation Performed
 

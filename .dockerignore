@@ -1,0 +1,25 @@
+# Keep the build context (and final image) small and reproducible.
+.git
+.github
+venv
+.venv
+tests
+docs
+scripts
+systemd
+docker-compose.yml
+__pycache__
+*.py[cod]
+*.egg-info
+dist
+build
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.coverage
+coverage.xml
+*.db
+*.sqlite3
+.env
+.idea
+.vscode

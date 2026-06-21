@@ -1,0 +1,44 @@
+# SentinelPi via Docker Compose.
+#
+# Host networking + NET_RAW/NET_ADMIN let the (non-root) process see and capture
+# LAN traffic, mirroring the systemd install. Drop the caps and set
+# `monitoring.packet_capture_enabled: false` in your config for a /proc-only,
+# capability-free deployment.
+#
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# Edit ./config/sentinelpi.yaml for your network, then restart the service.
+
+services:
+  sentinelpi:
+    build: .
+    image: sentinelpi:latest
+    container_name: sentinelpi
+    restart: unless-stopped
+
+    # Required to observe the host LAN (ARP, packet capture, /proc/net).
+    network_mode: host
+
+    # Packet capture without running as root. Remove both lines for /proc-only.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+    volumes:
+      # Your config (override the baked-in default).
+      - ./config/sentinelpi.yaml:/etc/sentinelpi/sentinelpi.yaml:ro
+      # Persist the database + learned baselines and the JSON alert log.
+      - sentinelpi-data:/var/lib/sentinelpi
+      - sentinelpi-logs:/var/log/sentinelpi
+
+    # Read-only root filesystem; only the state/log volumes are writable.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  sentinelpi-data:
+  sentinelpi-logs:

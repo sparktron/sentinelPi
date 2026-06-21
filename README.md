@@ -166,6 +166,28 @@ sudo journalctl -u sentinelpi -f
 
 Then open the dashboard at **http://localhost:8888/** (see [Usage](#usage) for the access token).
 
+To uninstall: `sudo bash scripts/uninstall.sh` (keeps config/data/logs; add `--purge` to remove them).
+
+### Docker
+
+A multi-stage [`Dockerfile`](Dockerfile) builds a slim image that runs as a non-root `sentinelpi`
+user, and [`docker-compose.yml`](docker-compose.yml) wires it up for LAN monitoring:
+
+```bash
+git clone https://github.com/sparktron/sentinelPi-.git
+cd sentinelPi-
+
+# Edit ./config/sentinelpi.yaml for your network first (it is mounted into the container)
+docker compose up -d --build
+docker compose logs -f
+```
+
+The compose file uses **host networking** plus `NET_RAW`/`NET_ADMIN` so the container can see and
+capture LAN traffic — Docker grants those capabilities directly to the non-root process, so it never
+runs as root. The database and baselines persist in named volumes. For a capability-free,
+`/proc`-only deployment, set `monitoring.packet_capture_enabled: false` in your config and remove the
+`cap_add` block. The image ships a `HEALTHCHECK` that runs `--check-config`.
+
 ### Development / testing
 
 ```bash
