@@ -5,27 +5,7 @@ All notable changes to SentinelPi are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- SIEM exports (ECS/CEF/OTLP) no longer reverse source and destination for
-  detector alerts where the actor is in `related_host` (port scan, lateral
-  movement); the attacker is now mapped to the SIEM source, not the target.
-- Suspicion-trend charts return the newest points when a host has more than the
-  query limit, instead of charting the oldest points and dropping the current trend.
-- The config-doctor packet-capture preflight now gates on Scapy availability to
-  match the actual runtime dependency, so `--check` can no longer report OK for a
-  `dumpcap`-only environment the daemon will not use.
-
-### Changed
-
-- Declare Python 3.10 support (`requires-python = ">=3.10"`); ruff and mypy now
-  target 3.10, and CI runs the suite on 3.10, 3.11, and 3.12.
-- Add `[project.urls]` (Homepage, Repository, Issues) and set package author
-  metadata (Dylan Sparks).
-
-## [1.0.0] - 2026-06-23
+## [1.0.0] - 2026-06-29
 
 First stable release: a lightweight, whole-network defensive anomaly monitor for
 Raspberry Pi.
@@ -74,7 +54,17 @@ Raspberry Pi.
   templates, hardened systemd unit + install/uninstall scripts, and a
   containerized path (multi-stage Dockerfile, docker-compose, non-root capture).
 - **CI** — compile checks, ruff, mypy, coverage gate (`fail_under = 70`), and a
-  packaging smoke test.
+  packaging smoke test. Supports and tests Python 3.10, 3.11, and 3.12.
 
-[Unreleased]: https://github.com/sparktron/sentinelPi/compare/v1.0.0...HEAD
+### Fixed
+
+- SIEM exports (ECS/CEF/OTLP) no longer reverse source and destination for
+  detector alerts where the actor is in `related_host` (port scan, lateral
+  movement); the attacker is now mapped to the SIEM source, not the target.
+- Suspicion-trend charts return the newest points when a host has more than the
+  query limit, instead of charting the oldest points and dropping the current trend.
+- The config-doctor packet-capture preflight now gates on Scapy availability to
+  match the actual runtime dependency, so `--check` can no longer report OK for a
+  `dumpcap`-only environment the daemon will not use.
+
 [1.0.0]: https://github.com/sparktron/sentinelPi/releases/tag/v1.0.0
