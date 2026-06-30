@@ -8,9 +8,9 @@ version = "1.0.0"
 description = "Lightweight defensive network anomaly monitor for Raspberry Pi"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [
-    {name = "SentinelPi Project"},
+    {name = "Dylan Sparks", email = "eedylansparks@gmail.com"},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -18,12 +18,14 @@ classifiers = [
     "Intended Audience :: System Administrators",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Security",
     "Topic :: System :: Monitoring",
     "Topic :: System :: Networking :: Monitoring",
 ]
+
 dependencies = [
     "scapy>=2.5.0,<3.0",
     "psutil>=5.9.0,<6.0",
@@ -50,6 +52,11 @@ dev = [
 [project.scripts]
 sentinelpi = "sentinelpi.main:main"
 
+[project.urls]
+Homepage = "https://github.com/sparktron/sentinelPi"
+Repository = "https://github.com/sparktron/sentinelPi"
+Issues = "https://github.com/sparktron/sentinelPi/issues"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -64,14 +71,14 @@ pythonpath = ["src"]
 addopts = "-v --tb=short"
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py310"
 line-length = 120
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["F401", "F841"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 files = ["src"]
 # Start pragmatic: type the code we wrote, don't yet demand full annotations on
 # every function. Tighten incrementally (disallow_untyped_defs, etc.) later.
