@@ -678,20 +678,32 @@ class Database:
     def get_suspicion_history(
         self, ip: str, since: Optional[datetime] = None, limit: int = 500
     ) -> List[Dict]:
-        """Return a host's suspicion-score points (oldest first) for charting."""
+        """Return a host's suspicion-score points (oldest first) for charting.
+
+        When there are more than *limit* points in the requested window, the
+        newest *limit* points are returned (not the oldest), so the chart always
+        shows the current trend rather than ancient history.
+        """
         conn = self._get_connection()
         if since is not None:
             rows = conn.execute(
                 """
-                SELECT ts, score FROM suspicion_history
-                WHERE ip = ? AND ts >= ?
-                ORDER BY ts ASC LIMIT ?
+                SELECT ts, score FROM (
+                    SELECT ts, score FROM suspicion_history
+                    WHERE ip = ? AND ts >= ?
+                    ORDER BY ts DESC LIMIT ?
+                ) ORDER BY ts ASC
                 """,
                 (ip, since.isoformat(), limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT ts, score FROM suspicion_history WHERE ip = ? ORDER BY ts ASC LIMIT ?",
+                """
+                SELECT ts, score FROM (
+                    SELECT ts, score FROM suspicion_history
+                    WHERE ip = ? ORDER BY ts DESC LIMIT ?
+                ) ORDER BY ts ASC
+                """,
                 (ip, limit),
             ).fetchall()
         return [dict(r) for r in rows]

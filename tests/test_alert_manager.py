@@ -69,6 +69,26 @@ class TestAlertManager:
         alert_manager.process_one(make_test_alert(host="10.99.99.99", dedup_key="trend:unknown"))
         assert db.get_suspicion_history("10.99.99.99") == []
 
+    def test_suspicion_history_returns_newest_points_when_over_limit(self, db):
+        """When there are more than limit points, the newest ones are returned."""
+        ip = "10.1.1.1"
+        base = datetime(2026, 1, 1, 0, 0, 0)
+        # Insert 10 points with ascending timestamps and scores 1..10.
+        for i in range(10):
+            db.record_suspicion_point(ip, float(i + 1), base + timedelta(minutes=i))
+
+        # Request only the last 4 points.
+        history = db.get_suspicion_history(ip, limit=4)
+
+        assert len(history) == 4
+        scores = [p["score"] for p in history]
+        # Results must be oldest-first within the returned window (for charting).
+        assert scores == sorted(scores)
+        # The newest point (score=10) must be present.
+        assert history[-1]["score"] == 10.0
+        # The oldest points must have been dropped.
+        assert history[0]["score"] == 7.0
+
     def test_duplicate_alert_suppressed(self, alert_manager):
         """Second alert with same dedup_key should be suppressed within cooldown."""
         alert1 = make_test_alert(dedup_key="dup:test")

@@ -61,7 +61,7 @@ A 2026-06-29 follow-up review opened a small corrective backlog below.
      fields already match the formatter's current assumption.
 
 2. **Suspicion-trend charts return the oldest capped points instead of the latest capped points.**
-   **Status: open.**
+   **Status: fixed.**
 
    `get_suspicion_history()` returns rows ordered ascending with `LIMIT 500`. Once a noisy host has
    more than 500 suspicion points inside the requested window, the host page charts the first 500
