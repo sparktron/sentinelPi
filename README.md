@@ -249,7 +249,9 @@ Go beyond a single host:
 <br>
 
 All behavior is driven by a single YAML file (`config/sentinelpi.yaml`). Every setting ships with a
-safe default — you only configure what differs for your network.
+safe default — you only configure what differs for your network. Daemon startup validates the
+effective configuration before creating runtime components; explicit missing/malformed files and
+unknown YAML keys are fatal instead of silently falling back to defaults.
 
 | Section | What it controls |
 |---------|------------------|

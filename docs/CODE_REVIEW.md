@@ -23,9 +23,8 @@ restarts; response plans/results/approvals/expirations have a durable ledger; ti
 nftables blocks reconcile after restart; and watchdog status reports overall and per-feed
 threat-intelligence refresh health. The full suite now contains 418 tests.
 
-The next most important work is to make learning state restart-safe, make response duration and
-audit behavior match configuration, report threat-intelligence refresh failure accurately, and
-remove or implement configuration switches that currently have no runtime effect.
+The next most important work is Phase 2 configuration truthfulness and deployment safety: make
+every public switch observable, reduce default capabilities, and harden flow-ingest trust bounds.
 
 Severity legend: **Critical** = a core advertised security behavior is absent or bypassed in normal
 operation; **High** = material detection, response, security, or operator-trust failure;
@@ -165,7 +164,7 @@ a local collector/proxy rather than raw remote UDP.
 
 ### Medium
 
-#### M1. Normal daemon startup does not validate configuration and explicit load errors fail open
+#### M1. Normal daemon startup does not validate configuration and explicit load errors fail open — Resolved
 
 **Issue:** validation only runs for `--check-config`/`--check`. Normal startup constructs
 `SentinelPi` directly from `load_config()`. A missing explicit path, malformed YAML, or non-mapping
@@ -175,9 +174,10 @@ pass `--check-config` while the intended control remains at its default.
 **Evidence:** `src/sentinelpi/config/manager.py:454-533` and
 `src/sentinelpi/main.py:846-870`.
 
-**Required fix:** make explicit/env-config failures fatal, preserve permissive defaults only when no
-config was requested, reject unknown keys with full paths, and run `validate_config()` before any
-side effects on every daemon startup. Add typo, missing-file, and malformed-file CLI tests.
+**Implemented change:** explicit/env-config failures are fatal, permissive defaults remain only when
+no config was requested, unknown keys report full paths, and normal startup validates before any
+subsystem or logging side effects. Typo, missing-file, malformed-file, and normal-startup
+regressions cover the boundary.
 
 #### M2. Sensitivity profiles overwrite explicit threshold values
 

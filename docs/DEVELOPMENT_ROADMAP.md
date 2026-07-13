@@ -50,7 +50,7 @@ have a durable audit record, and threat-feed health is visible per feed.
 
 ### Phase 2: Configuration Truthfulness And Deployment Safety (High)
 
-- [ ] Make normal startup validate configuration; fail explicit missing/malformed configs closed;
+- [x] Make normal startup validate configuration; fail explicit missing/malformed configs closed;
   reject unknown keys.
 - [ ] Define profile-versus-explicit-threshold precedence and test it.
 - [ ] Implement or remove the dead switches for DNS disable, active discovery, file integrity,
@@ -61,6 +61,10 @@ have a durable audit record, and threat-feed health is visible per feed.
 
 Exit criteria: every documented public option has a tested runtime effect, startup cannot silently
 fall back from an explicitly requested config, and default deployments use least privilege.
+
+Status: in progress 2026-07-12. Normal startup now validates before subsystem initialization,
+explicit and environment-selected config load failures are fatal, and unknown YAML keys report
+their full path.
 
 ### Phase 3: Resilience And Policy Consistency (Medium)
 

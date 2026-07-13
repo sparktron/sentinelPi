@@ -4,7 +4,9 @@ import subprocess
 import sys
 import os
 
-from sentinelpi.config.manager import Config, validate_config
+import pytest
+
+from sentinelpi.config.manager import Config, ConfigError, load_config, validate_config
 from sentinelpi.config.preflight import run_preflight
 
 
@@ -169,6 +171,74 @@ def test_check_config_exits_nonzero_for_invalid_yaml(tmp_path):
     assert "network.subnets[0]" in result.stdout
     assert "dashboard.port" in result.stdout
     assert "monitoring.sensitivity_profile" in result.stdout
+
+
+def test_load_config_rejects_explicit_missing_file(tmp_path):
+    missing = tmp_path / "missing.yaml"
+
+    with pytest.raises(ConfigError, match="configuration file not found"):
+        load_config(str(missing))
+
+
+def test_load_config_rejects_malformed_yaml(tmp_path):
+    config_path = tmp_path / "bad.yaml"
+    config_path.write_text("network: [", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="failed to parse configuration file"):
+        load_config(str(config_path))
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "unknown_path"),
+    [
+        ("dashbord:\n  enabled: false\n", "dashbord"),
+        ("monitoring:\n  dns_monitering_enabled: false\n", "monitoring.dns_monitering_enabled"),
+        ("trusted_devices:\n  - ip: 192.0.2.1\n    typo: value\n", "trusted_devices[0].typo"),
+    ],
+)
+def test_load_config_rejects_unknown_keys(tmp_path, yaml_text, unknown_path):
+    config_path = tmp_path / "unknown.yaml"
+    config_path.write_text(yaml_text, encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=unknown_path.replace("[", r"\[").replace("]", r"\]")):
+        load_config(str(config_path))
+
+
+def test_normal_startup_rejects_invalid_config_before_initialization(tmp_path):
+    config_path = tmp_path / "invalid.yaml"
+    config_path.write_text("dashboard:\n  port: nope\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "src"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "sentinelpi.main", "--config", str(config_path)],
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 2
+    assert "Configuration error: configuration is invalid" in result.stderr
+    assert "dashboard.port: must be an integer" in result.stderr
+
+
+def test_check_config_reports_missing_explicit_file_without_traceback(tmp_path):
+    missing = tmp_path / "missing.yaml"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "src"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "sentinelpi.main", "--config", str(missing), "--check-config"],
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 2
+    assert "Configuration error: configuration file not found" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_preflight_skips_when_outputs_are_disabled():

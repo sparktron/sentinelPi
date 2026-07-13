@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any, List, Optional
 if TYPE_CHECKING:
     from .ui.dashboard import DashboardServer
 
-from .config.manager import Config, load_config, validate_config
+from .config.manager import Config, ConfigError, load_config, validate_config
 from .config.preflight import run_preflight
 from .storage.database import Database
 from .baseline.engine import BaselineEngine
@@ -158,6 +158,15 @@ def build_detector_thread(
     return thread
 
 
+def _load_cli_config(path: Optional[str]) -> Config:
+    """Load CLI configuration and report load failures without a traceback."""
+    try:
+        return load_config(path)
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+
+
 class SentinelPi:
     """
     Main application class. Initializes all subsystems and manages lifecycle.
@@ -165,6 +174,10 @@ class SentinelPi:
 
     def __init__(self, config_path: Optional[str] = None) -> None:
         self.config = load_config(config_path)
+        issues = validate_config(self.config)
+        if issues:
+            details = "\n".join(f"  - {issue}" for issue in issues)
+            raise ConfigError(f"configuration is invalid:\n{details}")
         setup_logging(self.config)
         logger.info("=" * 60)
         logger.info("SentinelPi starting up...")
@@ -841,7 +854,7 @@ Examples:
 
     if args.backup or args.restore:
         from .storage import backup as backup_mod
-        config = load_config(args.config)
+        config = _load_cli_config(args.config)
         db_path = config.storage.db_path
         try:
             if args.backup:
@@ -865,7 +878,7 @@ Examples:
         sys.exit(0)
 
     if args.check_config or args.check:
-        config = load_config(args.config)
+        config = _load_cli_config(args.config)
         issues = validate_config(config)
         if issues:
             print(f"Configuration INVALID (loaded from: {config._source_path or 'defaults'})")
@@ -887,7 +900,11 @@ Examples:
                 sys.exit(3)
         sys.exit(0)
 
-    app = SentinelPi(config_path=args.config)
+    try:
+        app = SentinelPi(config_path=args.config)
+    except ConfigError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        sys.exit(2)
     app.start()
 
 

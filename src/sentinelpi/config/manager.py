@@ -7,10 +7,11 @@ keys fall back to safe defaults so the tool runs out of the box.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
-import ipaddress
 import re
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -451,25 +452,52 @@ class ConfigIssue:
         return f"{self.path}: {self.message}"
 
 
-def _merge_dataclass_from_dict(dc_instance: Any, data: Dict[str, Any]) -> None:
+class ConfigError(ValueError):
+    """Configuration could not be loaded safely."""
+
+
+def _merge_dataclass_from_dict(dc_instance: Any, data: Dict[str, Any], path: str = "") -> None:
     """
     Recursively populate a dataclass instance from a dict.
-    Unknown keys are ignored. Nested dataclasses are handled recursively.
+    Unknown keys are rejected. Nested dataclasses are handled recursively.
     """
-    import dataclasses
     if not dataclasses.is_dataclass(dc_instance):
         return
-    for f in dataclasses.fields(dc_instance):
-        if f.name.startswith("_"):
+    fields = {f.name: f for f in dataclasses.fields(dc_instance) if not f.name.startswith("_")}
+    for key in data:
+        if key not in fields:
+            key_path = f"{path}.{key}" if path else key
+            raise ConfigError(f"unknown configuration key: {key_path}")
+    for name, f in fields.items():
+        if name not in data:
             continue
-        if f.name not in data:
-            continue
-        val = data[f.name]
-        current = getattr(dc_instance, f.name)
-        if dataclasses.is_dataclass(current) and isinstance(val, dict):
-            _merge_dataclass_from_dict(current, val)
+        val = data[name]
+        current = getattr(dc_instance, name)
+        key_path = f"{path}.{name}" if path else name
+        if dataclasses.is_dataclass(current):
+            if not isinstance(val, dict):
+                raise ConfigError(f"{key_path}: must be a mapping")
+            _merge_dataclass_from_dict(current, val, key_path)
         else:
-            setattr(dc_instance, f.name, val)
+            setattr(dc_instance, name, val)
+
+
+def _load_trusted_devices(raw: Any) -> List[TrustedDevice]:
+    if not isinstance(raw, list):
+        raise ConfigError("trusted_devices: must be a list")
+
+    allowed = {f.name for f in dataclasses.fields(TrustedDevice)}
+    devices: List[TrustedDevice] = []
+    for index, item in enumerate(raw):
+        path = f"trusted_devices[{index}]"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{path}: must be a mapping")
+        unknown = set(item) - allowed
+        if unknown:
+            key = sorted(unknown)[0]
+            raise ConfigError(f"unknown configuration key: {path}.{key}")
+        devices.append(TrustedDevice(**item))
+    return devices
 
 
 def load_config(path: Optional[str] = None) -> Config:
@@ -481,12 +509,14 @@ def load_config(path: Optional[str] = None) -> Config:
       2. SENTINELPI_CONFIG environment variable
       3. DEFAULT_CONFIG_PATHS list
 
-    Falls back to all-defaults Config if no file is found.
+    Falls back to all-defaults Config only when no explicit or default file is found.
+    Explicit paths and malformed files fail closed with :class:`ConfigError`.
     """
     config = Config()
 
     # Determine file to load
     candidate: Optional[Path] = None
+    explicit = bool(path) or "SENTINELPI_CONFIG" in os.environ
     if path:
         candidate = Path(path)
     elif "SENTINELPI_CONFIG" in os.environ:
@@ -502,30 +532,30 @@ def load_config(path: Optional[str] = None) -> Config:
         return config
 
     if not candidate.exists():
+        if explicit:
+            raise ConfigError(f"configuration file not found: {candidate}")
         logger.warning("Config file %s not found; using defaults.", candidate)
         return config
 
     try:
-        with open(candidate, "r") as fh:
+        with open(candidate, "r", encoding="utf-8") as fh:
             raw = yaml.safe_load(fh)
         if not isinstance(raw, dict):
-            logger.warning("Config file %s is empty or invalid; using defaults.", candidate)
-            return config
+            raise ConfigError(f"configuration file must contain a mapping: {candidate}")
 
         # Populate trusted_devices list specially
         if "trusted_devices" in raw:
-            config.trusted_devices = [
-                TrustedDevice(**d) for d in raw.pop("trusted_devices", [])
-            ]
+            config.trusted_devices = _load_trusted_devices(raw["trusted_devices"])
+            raw = {key: value for key, value in raw.items() if key != "trusted_devices"}
 
         _merge_dataclass_from_dict(config, raw)
         config._source_path = str(candidate)
         logger.info("Loaded config from %s", candidate)
 
     except yaml.YAMLError as exc:
-        logger.error("Failed to parse config file %s: %s", candidate, exc)
-    except Exception as exc:
-        logger.error("Unexpected error loading config %s: %s", candidate, exc)
+        raise ConfigError(f"failed to parse configuration file {candidate}: {exc}") from exc
+    except OSError as exc:
+        raise ConfigError(f"failed to read configuration file {candidate}: {exc}") from exc
 
     # Apply sensitivity profile multipliers
     _apply_sensitivity_profile(config)
