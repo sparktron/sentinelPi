@@ -6,15 +6,58 @@ M3: build_detector_thread takes the alert manager explicitly (no dead
 M6: PacketCapture validates configured interfaces at startup instead of
     IndexError-ing on an empty list.
 L1/L2: dashboard /api/alerts validates int and enum query params, returning 400
-    rather than 500 on bad input.
+rather than 500 on bad input. Repeated logging setup also replaces only the
+handlers owned by SentinelPi.
 """
 
 from __future__ import annotations
 
+import logging
+import logging.handlers
 import threading
 from unittest.mock import MagicMock
 
 import pytest
+
+
+def test_setup_logging_replaces_only_sentinelpi_handlers(config, tmp_path):
+    from sentinelpi.main import setup_logging
+
+    config.logging.log_dir = str(tmp_path)
+    root = logging.getLogger()
+    foreign_handler = logging.NullHandler()
+    root.addHandler(foreign_handler)
+
+    try:
+        setup_logging(config)
+        first_owned = [
+            handler
+            for handler in root.handlers
+            if getattr(handler, "_sentinelpi_owned", False)
+        ]
+
+        setup_logging(config)
+        second_owned = [
+            handler
+            for handler in root.handlers
+            if getattr(handler, "_sentinelpi_owned", False)
+        ]
+
+        assert foreign_handler in root.handlers
+        assert len(second_owned) == 2
+        assert not set(first_owned) & set(second_owned)
+        assert all(handler not in root.handlers for handler in first_owned)
+        assert all(
+            not isinstance(handler, logging.handlers.RotatingFileHandler)
+            or handler.stream is None
+            for handler in first_owned
+        )
+    finally:
+        root.removeHandler(foreign_handler)
+        for handler in list(root.handlers):
+            if getattr(handler, "_sentinelpi_owned", False):
+                root.removeHandler(handler)
+                handler.close()
 
 
 # --------------------------------------------------------------------------- M3

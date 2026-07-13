@@ -1,7 +1,7 @@
 # SentinelPi Repository-Wide Code Review
 
 _Review date: 2026-07-12 · Scope: application code, tests, configuration, deployment,
-operator documentation, and packaging. Phase 3 completion validated 2026-07-12._
+operator documentation, and packaging. Corrective findings closed 2026-07-13._
 
 ## Executive Summary
 
@@ -34,7 +34,9 @@ are size- and schema-validated. The full suite now contains 469 tests.
 **Phase 4 status (2026-07-13): in progress.** The runtime wiring manifest/capability matrix is
 shipped across startup, preflight, status, and tests. The full suite now contains 475 tests.
 
-The next most important work is the remaining Phase 4 feature backlog.
+**Corrective finding status (2026-07-13): complete.** The final open finding, idempotent logging
+setup, is resolved with owned-handler replacement and a repeated-setup regression. The full suite
+now contains 476 tests. The remaining Phase 4 items are feature work rather than unresolved fixes.
 
 Severity legend: **Critical** = a core advertised security behavior is absent or bypassed in normal
 operation; **High** = material detection, response, security, or operator-trust failure;
@@ -245,7 +247,7 @@ This is surprising in tests, maintenance commands, and future multi-database use
 writes distinct state to two database paths on one thread and proves closing one instance does not
 close or redirect the other.
 
-#### M6. Alert processing can execute a response after audit persistence fails
+#### M6. Alert processing can execute a response after audit persistence fails — Resolved
 
 **Issue:** a failed `save_alert()` is logged, but notification, suspicion changes, active response,
 and correlation continue, and `_handle_alert()` still returns `True`. An armed response can modify
@@ -273,7 +275,7 @@ may remain. This also blocks safe implementation of timed rollback.
 results, duration, and expiration timestamps. Pending actions bind to configured responders after
 restart, and executed/rejected/expired states remain available in recent history.
 
-#### M8. The dashboard “trust device” action does not reduce detector noise
+#### M8. The dashboard “trust device” action does not reduce detector noise — Resolved
 
 **Issue:** the endpoint mutates a `Device` object and database flag, but detectors consult static
 IP/domain/port whitelists, and `DeviceTracker` snapshots trusted IP/MAC sets at construction. The
@@ -303,7 +305,7 @@ after worker threads stop and before SQLite closes.
 
 ### Low
 
-#### L1. Forwarded alert parsing can turn authenticated malformed input into a 500
+#### L1. Forwarded alert parsing can turn authenticated malformed input into a 500 — Resolved
 
 **Issue:** `alert_from_dict()` directly casts confidence with `float()` and converts `extra` with
 `dict()`. Invalid authenticated collector payloads can raise instead of returning a structured 400.
@@ -313,13 +315,15 @@ types, enums, ISO timestamps, confidence ranges, per-field string lengths, and b
 depth/item/value sizes before constructing an `Alert`. Malformed JSON, unsupported content types,
 oversized bodies, invalid fields, and authentication failures return structured JSON 4xx errors.
 
-#### L2. Logging setup is not idempotent
+#### L2. Logging setup is not idempotent — Resolved
 
 **Issue:** each `SentinelPi` construction adds root handlers without checking existing handlers.
 Repeated app construction in one process duplicates log output and keeps file descriptors open.
 
-**Required fix:** mark/replace SentinelPi-owned handlers or configure logging once at the entrypoint;
-add a repeated-initialization test.
+**Implemented change:** logging setup marks the console and rotating-file handlers it owns. A
+subsequent setup removes and closes those handlers before installing replacements while preserving
+handlers owned by an embedding process or test harness. A regression covers repeated setup, file
+closure, and foreign-handler preservation.
 
 ## Recommended Feature Work
 
@@ -355,17 +359,19 @@ These additions follow directly from the defects and current architecture, in pr
 
 1. ~~C1 and C2 with service-level regression tests.~~ Completed 2026-07-12.
 2. ~~H1, H2, and H3 for detection/response correctness across restarts.~~ Completed 2026-07-12.
-3. H4 and M1 so configuration and documentation tell the truth.
-4. H5, H6, M6, and M7 for privilege boundaries and response audit safety.
-5. Remaining medium/low findings and feature work.
+3. ~~H4 and M1 so configuration and documentation tell the truth.~~ Completed 2026-07-12.
+4. ~~H5, H6, M6, and M7 for privilege boundaries and response audit safety.~~ Completed 2026-07-12.
+5. ~~Remaining medium/low corrective findings.~~ Completed 2026-07-13. Feature work continues in
+   Phase 4.
 
 ## Validation Performed
 
 - Initial review: `python -m pytest -q` — **405 passed** on Python 3.10.12.
 - Phase 0 implementation: `python -m pytest -q` — **408 passed** on Python 3.10.12.
 - Phase 1 implementation: `python -m pytest -q` — **418 passed** on Python 3.10.12.
+- Corrective closeout: `python -m pytest -q` — **476 passed** on Python 3.10.12.
 - `ruff check src tests` — passed.
-- `mypy` — passed for the configured `src/` scope (58 source files).
+- `mypy` — passed for the configured `src/` scope (65 source files).
 - `python -m compileall -q src tests` — passed.
 - Manual static trace of all production modules, service startup/shutdown wiring, public config
   fields, deployment manifests, responders, dashboard APIs, persistence, and tests.

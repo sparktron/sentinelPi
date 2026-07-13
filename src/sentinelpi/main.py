@@ -97,9 +97,15 @@ def setup_logging(config: Config) -> None:
 
     level = getattr(logging, config.logging.level.upper(), logging.INFO)
 
-    # Root logger
+    # Root logger.  Reconfiguration can happen in tests, embedded use, or a
+    # supervised reload.  Replace only handlers created by SentinelPi so we do
+    # not duplicate output or disturb handlers owned by the host process.
     root = logging.getLogger()
     root.setLevel(level)
+    for handler in list(root.handlers):
+        if getattr(handler, "_sentinelpi_owned", False):
+            root.removeHandler(handler)
+            handler.close()
 
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
@@ -108,6 +114,7 @@ def setup_logging(config: Config) -> None:
         "%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     ))
+    setattr(console_handler, "_sentinelpi_owned", True)
     root.addHandler(console_handler)
 
     # Rotating file handler
@@ -123,6 +130,7 @@ def setup_logging(config: Config) -> None:
             "%(asctime)s [%(levelname)-8s] %(name)s — %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         ))
+        setattr(file_handler, "_sentinelpi_owned", True)
         root.addHandler(file_handler)
     except OSError as exc:
         logger.warning("Cannot open log file: %s — logging to console only.", exc)

@@ -120,8 +120,11 @@ input, inventory component, detector, notifier, responder, and runtime service. 
 routing and polling now derive from this registry; preflight exposes the same configured/disabled
 matrix; `/api/status` reports configured, ready, started, degraded, and stopped states plus activity
 counters/timestamps. Wiring tests assert configured routed components are actually bound.
-Full validation passes with 475 tests, Ruff across `src` and `tests`, mypy across all 65 source
-files, compileall, and the shipped configuration check.
+The corrective backlog is also fully closed: repeated logging setup now replaces and closes only
+SentinelPi-owned handlers, preventing duplicate output without disturbing host-process handlers.
+Full validation passes with 476 tests, Ruff across `src` and `tests`, mypy across all 65 source
+files, compileall, and the shipped configuration check. Remaining unchecked items above are feature
+work, not unresolved review fixes.
 
 ## Findings To Fix
 
@@ -350,8 +353,7 @@ Exit criteria:
 
 Status: notifier lifecycle management, DNS cooldown pruning, dead-thread alerts, stale-capture
 alerts, threat-intel refresh/staleness alerts, queue-saturation alerts, low-disk alerts, and
-`/api/status` watchdog exposure are complete as of 2026-06-10. Daily-report health summaries remain
-open.
+`/api/status` watchdog exposure and daily-report health summaries are complete as of 2026-06-17.
 
 Exit criteria:
 - Shutdown tests prove no managed service is skipped.

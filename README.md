@@ -50,6 +50,8 @@ collector inputs are bounded, device trust is live/auditable, and unpersisted al
 active response.
 Phase 4 is underway with a shared runtime component matrix that drives detector routing and polling,
 preflight visibility, and `/api/status` state/activity reporting.
+All corrective findings from the repository-wide review are now resolved, including safe repeated
+logging initialization without duplicate console or file handlers.
 
 ## ✨ Highlights
 
