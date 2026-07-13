@@ -48,6 +48,8 @@ and threat-feed health now survive or reconcile across service restarts.
 Phase 2 and Phase 3 are complete: configuration and deployment fail safely, runtime state and
 collector inputs are bounded, device trust is live/auditable, and unpersisted alerts cannot trigger
 active response.
+Phase 4 is underway with a shared runtime component matrix that drives detector routing and polling,
+preflight visibility, and `/api/status` state/activity reporting.
 
 ## ✨ Highlights
 
@@ -60,7 +62,7 @@ active response.
 | 🖥️ **Sleek live dashboard** | Dark-themed web UI with SSE live updates, device inventory, per-host drill-downs, suspicion trends, and a response approval queue. |
 | 🛡️ **Can fight back (safely)** | Optional firewall block / DNS sinkhole / ARP re-pin / kill-switch — off by default, dry-run first, human-approved. |
 | 📣 **Tells you anywhere** | Email, ntfy push (with Approve/Reject buttons), Twilio SMS, webhooks, plus SIEM export (syslog ECS/CEF) and OpenTelemetry. |
-| 🩺 **Watches itself** | A built-in watchdog raises `SYSTEM` alerts when *SentinelPi* is degraded — dead threads, stale capture, low disk. |
+| 🩺 **Watches itself** | A built-in watchdog raises `SYSTEM` alerts for dead threads, stale capture, and low disk; the runtime component matrix reports configured, started, degraded, and active capabilities. |
 
 ## 🚀 Quick start
 

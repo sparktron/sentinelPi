@@ -121,11 +121,14 @@ def test_capabilities_banner_warns_when_degraded(monkeypatch, caplog):
     """_log_capabilities logs a degraded-mode warning when an optional dep is off."""
     import logging
     import sentinelpi.capture.packet_capture as pc
+    from sentinelpi.config.manager import Config
     from sentinelpi.main import SentinelPi
+    from sentinelpi.runtime_registry import RuntimeComponentRegistry
 
     monkeypatch.setattr(pc, "SCAPY_AVAILABLE", False)
+    sentinel = SentinelPi.__new__(SentinelPi)
+    sentinel._components = RuntimeComponentRegistry(Config())
     with caplog.at_level(logging.WARNING):
-        # The method ignores self, so a bare object is a fine stand-in.
-        SentinelPi._log_capabilities(object())
+        sentinel._log_capabilities()
 
     assert any("degraded mode" in r.message.lower() for r in caplog.records)

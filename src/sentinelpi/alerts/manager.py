@@ -79,10 +79,12 @@ class AlertManager:
         self.device_tracker = device_tracker
         self._lock = threading.Lock()
         self._notifiers: List[BaseNotifier] = []
+        self._notifier_activity_callback = None
         # Optional active-response orchestrator (Phase 2); off unless wired up.
         self._responder_manager = None
         # Optional incident correlator (Phase 3); built when enabled.
         self._correlator = None
+        self._correlator_activity_callback = None
         if getattr(config, "correlation", None) and config.correlation.enabled:
             from .correlator import IncidentCorrelator
             self._correlator = IncidentCorrelator(config)
@@ -103,6 +105,10 @@ class AlertManager:
             self._notifiers.append(notifier)
         logger.debug("Registered notifier: %s", notifier.__class__.__name__)
 
+    def set_notifier_activity_callback(self, callback) -> None:
+        """Observe successful notifier dispatches for runtime capability status."""
+        self._notifier_activity_callback = callback
+
     def close_notifiers(self, timeout: float = 5.0) -> None:
         """Stop and drain registered notifiers that own background resources."""
         with self._lock:
@@ -116,6 +122,15 @@ class AlertManager:
     def set_responder_manager(self, responder_manager) -> None:
         """Wire in an active-response orchestrator (Phase 2). Optional."""
         self._responder_manager = responder_manager
+
+    @property
+    def correlator(self):
+        """Return the optional incident correlator for runtime registration."""
+        return self._correlator
+
+    def set_correlator_activity_callback(self, callback) -> None:
+        """Observe incident-correlation input for runtime capability status."""
+        self._correlator_activity_callback = callback
 
     def process(self, alerts: List[Alert]) -> int:
         """
@@ -195,6 +210,8 @@ class AlertManager:
         for notifier in self._notifiers:
             try:
                 notifier.send(alert)
+                if self._notifier_activity_callback is not None:
+                    self._notifier_activity_callback(notifier)
             except Exception as exc:
                 logger.error("Notifier %s failed: %s", notifier.__class__.__name__, exc)
 
@@ -211,6 +228,8 @@ class AlertManager:
         if self._correlator is not None:
             try:
                 incident = self._correlator.observe(alert)
+                if self._correlator_activity_callback is not None:
+                    self._correlator_activity_callback(self._correlator)
                 if incident is not None:
                     self.process_one(incident)
             except Exception as exc:

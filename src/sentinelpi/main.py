@@ -81,6 +81,7 @@ from .utils.geo import init_geo
 from .utils.asn import init_asn
 from .utils.watchdog import OperationalWatchdog
 from .reporting import ReportScheduler
+from .runtime_registry import RuntimeComponentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ def build_detector_thread(
     stop_event: threading.Event,
     poll_interval: int = 60,
     name: Optional[str] = None,
+    on_poll=None,
 ) -> threading.Thread:
     """
     Wrap a detector's poll() method in a daemon thread.
@@ -147,6 +149,8 @@ def build_detector_thread(
         while not stop_event.is_set():
             try:
                 alerts = detector_instance.poll()
+                if on_poll is not None:
+                    on_poll()
                 if alerts:
                     alert_manager.process(alerts)
             except Exception as exc:
@@ -183,6 +187,7 @@ class SentinelPi:
             details = "\n".join(f"  - {issue}" for issue in issues)
             raise ConfigError(f"configuration is invalid:\n{details}")
         setup_logging(self.config)
+        self._components = RuntimeComponentRegistry(self.config)
         logger.info("=" * 60)
         logger.info("SentinelPi starting up...")
         logger.info("Config: %s", self.config._source_path or "built-in defaults")
@@ -200,6 +205,18 @@ class SentinelPi:
         self._baseline = BaselineEngine(self.config, self._db)
         self._device_tracker = DeviceTracker(self.config, self._db)
         self._alert_manager = AlertManager(self.config, self._db, self._device_tracker)
+        self._alert_manager.set_notifier_activity_callback(
+            self._components.record_instance_activity
+        )
+        self._components.attach("inventory:device_tracker", self._device_tracker)
+        self._components.attach(
+            "detector:incident_correlator", self._alert_manager.correlator
+        )
+        if self._alert_manager.correlator is not None:
+            self._components.mark_started("detector:incident_correlator")
+            self._alert_manager.set_correlator_activity_callback(
+                self._components.record_instance_activity
+            )
 
         # Optional GeoIP
         if self.config.monitoring.geo_enabled:
@@ -284,6 +301,8 @@ class SentinelPi:
                 intel=self._intel_service, **detector_kwargs
             )
 
+        self._register_detection_components()
+
         # Packet capture event queue and router
         self._capture_queue: queue.Queue = queue.Queue(maxsize=50_000)
         self._packet_capture: Optional[PacketCapture] = None
@@ -328,6 +347,47 @@ class SentinelPi:
                 "Running in degraded mode — %d optional feature(s) disabled: %s",
                 len(disabled), "; ".join(f"{name} ({why})" for name, why in disabled),
             )
+        configured = [
+            item for item in self._components.snapshot() if item["configured"]
+        ]
+        by_kind: dict[str, int] = {}
+        for item in configured:
+            kind = str(item["kind"])
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+        logger.info(
+            "Runtime manifest: %d configured component(s): %s",
+            len(configured),
+            ", ".join(f"{kind}={count}" for kind, count in sorted(by_kind.items())),
+        )
+
+    def _register_detection_components(self) -> None:
+        """Bind initialized detector/input instances to the shared manifest."""
+        components = {
+            "detector:arp": self._arp_detector,
+            "detector:beacon": self._beacon_detector,
+            "detector:connection": self._connection_detector,
+            "detector:port_scan": self._port_scan_detector,
+            "detector:dns": self._dns_detector,
+            "detector:lateral_movement": self._lateral_detector,
+            "detector:auth_log": self._auth_detector,
+            "detector:traffic_spike": self._traffic_detector,
+            "detector:doh": self._doh_detector,
+            "detector:geo_country": self._geo_country_detector,
+            "detector:asn": self._asn_detector,
+            "detector:active_hours": self._active_hours_detector,
+            "detector:host_profile": self._host_profile_detector,
+            "detector:threat_intel": self._threat_intel_detector,
+            "detector:file_integrity": self._file_integrity_detector,
+            "input:active_discovery": self._active_discovery,
+            "service:reports": self._report_scheduler,
+        }
+        for key, instance in components.items():
+            self._components.attach(key, instance)
+
+    def _add_notifier(self, key: str, notifier) -> None:
+        self._alert_manager.add_notifier(notifier)
+        self._components.attach(key, notifier)
+        self._components.mark_started(key)
 
     def _setup_responders(self) -> None:
         """
@@ -339,13 +399,26 @@ class SentinelPi:
             return
         manager = ResponderManager(self.config, self._db)
         if rc.firewall_block_enabled:
-            manager.add_responder(FirewallResponder(self.config))
+            firewall_responder = FirewallResponder(self.config)
+            manager.add_responder(firewall_responder)
+            self._components.attach("responder:firewall", firewall_responder)
+            self._components.mark_started("responder:firewall")
         if rc.dns_sinkhole_enabled:
-            manager.add_responder(DNSSinkholeResponder(self.config))
+            sinkhole_responder = DNSSinkholeResponder(self.config)
+            manager.add_responder(sinkhole_responder)
+            self._components.attach("responder:dns_sinkhole", sinkhole_responder)
+            self._components.mark_started("responder:dns_sinkhole")
         if rc.arp_restore_enabled:
-            manager.add_responder(ARPRestoreResponder(self.config))
+            arp_responder = ARPRestoreResponder(self.config)
+            manager.add_responder(arp_responder)
+            self._components.attach("responder:arp_restore", arp_responder)
+            self._components.mark_started("responder:arp_restore")
         if rc.killswitch_enabled:
-            manager.add_responder(KillSwitchResponder(self.config))
+            killswitch_responder = KillSwitchResponder(self.config)
+            manager.add_responder(killswitch_responder)
+            self._components.attach("responder:killswitch", killswitch_responder)
+            self._components.mark_started("responder:killswitch")
+        manager.set_activity_callback(self._components.record_instance_activity)
         self._alert_manager.set_responder_manager(manager)
         self._responder_manager = manager
         # Close the approval loop: push Approve/Reject buttons to ntfy when an
@@ -362,10 +435,12 @@ class SentinelPi:
         from .models import Severity
 
         # Always: console output
-        self._alert_manager.add_notifier(ConsoleNotifier(min_severity=Severity.INFO))
+        self._add_notifier(
+            "notifier:console", ConsoleNotifier(min_severity=Severity.INFO)
+        )
 
         # Always: JSON alerts file
-        self._alert_manager.add_notifier(FileNotifier(
+        self._add_notifier("notifier:file", FileNotifier(
             log_path=self.config.logging.json_alerts_file,
             min_severity=Severity.INFO,
             max_bytes=self.config.logging.max_bytes,
@@ -374,31 +449,31 @@ class SentinelPi:
 
         # Optional: email
         if self.config.notifications.email_enabled:
-            self._alert_manager.add_notifier(EmailNotifier(self.config))
+            self._add_notifier("notifier:email", EmailNotifier(self.config))
             logger.info("Email notifications enabled.")
 
         # Optional: webhook
         if self.config.notifications.webhook_enabled and self.config.notifications.webhook_url:
-            self._alert_manager.add_notifier(WebhookNotifier(self.config))
+            self._add_notifier("notifier:webhook", WebhookNotifier(self.config))
             logger.info("Webhook notifications enabled: %s", self.config.notifications.webhook_url)
 
         # Optional: ntfy (with Approve/Reject action buttons for pending responses)
         if self.config.notifications.ntfy_enabled and self.config.notifications.ntfy_topic:
             self._ntfy_notifier = NtfyNotifier(self.config)
-            self._alert_manager.add_notifier(self._ntfy_notifier)
+            self._add_notifier("notifier:ntfy", self._ntfy_notifier)
             logger.info("ntfy notifications enabled: %s/%s",
                         self.config.notifications.ntfy_server.rstrip("/"),
                         self.config.notifications.ntfy_topic)
 
         # Optional: SMS via Twilio
         if self.config.notifications.sms_enabled:
-            self._alert_manager.add_notifier(TwilioSMSNotifier(self.config))
+            self._add_notifier("notifier:sms", TwilioSMSNotifier(self.config))
             logger.info("Twilio SMS notifications enabled for %d recipient(s).",
                         len(self.config.notifications.sms_to))
 
         # Optional: SIEM export over syslog (ECS or CEF)
         if self.config.notifications.siem_enabled and self.config.notifications.siem_host:
-            self._alert_manager.add_notifier(SyslogNotifier(self.config))
+            self._add_notifier("notifier:siem", SyslogNotifier(self.config))
             logger.info("SIEM export enabled: %s syslog %s://%s:%d",
                         self.config.notifications.siem_format,
                         self.config.notifications.siem_transport,
@@ -407,13 +482,13 @@ class SentinelPi:
 
         # Optional: OpenTelemetry logs export via OTLP/HTTP
         if self.config.notifications.otlp_enabled and self.config.notifications.otlp_endpoint:
-            self._alert_manager.add_notifier(OTLPNotifier(self.config))
+            self._add_notifier("notifier:otlp", OTLPNotifier(self.config))
             logger.info("OpenTelemetry export enabled: OTLP/HTTP to %s",
                         self.config.notifications.otlp_endpoint)
 
         # Sensor mode: forward alerts to a central collector (Phase 3).
         if self.config.cluster.role == "sensor" and self.config.cluster.collector_url:
-            self._alert_manager.add_notifier(ForwardNotifier(self.config))
+            self._add_notifier("notifier:forward", ForwardNotifier(self.config))
             logger.info("Sensor mode: forwarding alerts to collector %s",
                         self.config.cluster.collector_url)
 
@@ -440,32 +515,19 @@ class SentinelPi:
         ok = self._packet_capture.start()
         if not ok:
             logger.warning("Packet capture unavailable — using proc polling only.")
+            self._components.attach("input:packet_capture", self._packet_capture)
+            self._components.mark_degraded(
+                "input:packet_capture", "capture unavailable; using proc polling"
+            )
             return
 
+        self._components.attach("input:packet_capture", self._packet_capture)
+        self._components.mark_started("input:packet_capture")
         self._ensure_event_router()
 
     def _build_event_detectors(self) -> list:
         """Ordered list of detectors that consume packet-capture/flow events."""
-        event_detectors = [
-            self._arp_detector,
-            self._beacon_detector,
-            self._connection_detector,
-            self._port_scan_detector,
-            self._lateral_detector,
-        ]
-        if self.config.monitoring.dns_monitoring_enabled:
-            event_detectors.append(self._dns_detector)
-        for optional in (
-            self._doh_detector,
-            self._geo_country_detector,
-            self._asn_detector,
-            self._active_hours_detector,
-            self._host_profile_detector,
-            self._threat_intel_detector,
-        ):
-            if optional is not None:
-                event_detectors.append(optional)
-        return event_detectors
+        return self._components.routed_instances("event")
 
     def _ensure_event_router(self) -> None:
         """
@@ -484,11 +546,13 @@ class SentinelPi:
             while not self._stop_event.is_set():
                 try:
                     event = self._capture_queue.get(timeout=1.0)
+                    self._components.record_activity("service:event_router")
                     if self._watchdog is not None:
                         self._watchdog.record_event()
                     for det in event_detectors:
                         try:
                             alerts = det.process_event(event)
+                            self._components.record_instance_activity(det)
                             if alerts:
                                 self._alert_manager.process(alerts)
                         except Exception as exc:
@@ -500,9 +564,15 @@ class SentinelPi:
             logger.info("Event router stopped.")
 
         router_thread = threading.Thread(target=_route_events, daemon=True, name="EventRouter")
+        self._components.attach("service:event_router", router_thread)
         self._threads.append(router_thread)
         router_thread.start()
         self._event_router_started = True
+        self._components.mark_started("service:event_router")
+        for detector in event_detectors:
+            key = self._components.key_for_instance(detector)
+            if key is not None:
+                self._components.mark_started(key, "event router")
         if self._watchdog is not None:
             self._watchdog.set_event_sources_active(True)
 
@@ -526,7 +596,13 @@ class SentinelPi:
             if src.start():
                 self._flow_sources.append(src)
                 started.append("conntrack")
+                self._components.attach("input:conntrack", src)
+                self._components.mark_started("input:conntrack")
             else:
+                self._components.attach("input:conntrack", src)
+                self._components.mark_degraded(
+                    "input:conntrack", "command and proc source unavailable"
+                )
                 logger.warning(
                     "conntrack flow ingest unavailable — '%s' and %s both unreadable.",
                     fc.conntrack_command, ConntrackFlowSource.PROC_PATH,
@@ -547,6 +623,11 @@ class SentinelPi:
             if collector.start():
                 self._flow_sources.append(collector)
                 started.append(f"netflow/ipfix:{fc.netflow_port}")
+                self._components.attach("input:netflow", collector)
+                self._components.mark_started("input:netflow", f"udp/{fc.netflow_port}")
+            else:
+                self._components.attach("input:netflow", collector)
+                self._components.mark_degraded("input:netflow", "collector failed to start")
 
         if fc.filterlog_enabled:
             flog = FilterlogSource(
@@ -558,7 +639,13 @@ class SentinelPi:
             if flog.start():
                 self._flow_sources.append(flog)
                 started.append("filterlog")
+                self._components.attach("input:filterlog", flog)
+                self._components.mark_started("input:filterlog")
             else:
+                self._components.attach("input:filterlog", flog)
+                self._components.mark_degraded(
+                    "input:filterlog", "configured path unreadable"
+                )
                 logger.warning(
                     "filterlog flow ingest unavailable — %s not readable.", fc.filterlog_path,
                 )
@@ -566,42 +653,39 @@ class SentinelPi:
         if started:
             logger.info("Flow ingest active: %s", ", ".join(started))
             self._ensure_event_router()
+        elif not self._event_router_started:
+            self._components.mark_degraded(
+                "service:event_router", "no configured event source started"
+            )
 
     def _build_pollers(self) -> list:
         """Return every component driven by the periodic polling loop."""
-        pollers = [
-            (self._device_tracker, 30, "DeviceTracker"),
-            (self._connection_detector, 60, "ConnectionDetector"),
-            (self._port_scan_detector, 60, "PortScanDetector"),
-            (self._auth_detector, 30, "AuthLogDetector"),
-            (self._beacon_detector, 60, "BeaconDetector"),
-            (self._lateral_detector, 60, "LateralMovementDetector"),
-            (self._arp_detector, 60, "ARPDetector"),
-            (self._traffic_detector, 60, "TrafficSpikeDetector"),
+        return [
+            (component, interval, name)
+            for component, interval, name, _key in self._components.pollers()
         ]
-        for component, interval, name in (
-            (
-                self._active_discovery,
-                self.config.monitoring.active_discovery_interval_seconds,
-                "ActiveDiscovery",
-            ),
-            (self._file_integrity_detector, 60, "FileIntegrityDetector"),
-            (self._report_scheduler, 60, "ReportScheduler"),
-        ):
-            if component is not None:
-                pollers.append((component, interval, name))
-        return pollers
 
     def _start_polling_threads(self) -> None:
         """Start all detector and inventory polling threads."""
         poll_configs = self._build_pollers()
 
         for det_or_tracker, interval, name in poll_configs:
+            key = self._components.key_for_instance(det_or_tracker)
             t = build_detector_thread(
-                det_or_tracker, self._alert_manager, self._stop_event, interval, name
+                det_or_tracker,
+                self._alert_manager,
+                self._stop_event,
+                interval,
+                name,
+                on_poll=(
+                    (lambda component_key=key: self._components.record_activity(component_key))
+                    if key is not None else None
+                ),
             )
             self._threads.append(t)
             t.start()
+            if key is not None:
+                self._components.mark_started(key, f"poll every {interval}s")
             logger.debug("Started thread: %s", name)
 
     def _start_threat_intel(self) -> None:
@@ -638,15 +722,26 @@ class SentinelPi:
             logger.info("Threat-intel refresh thread stopped.")
 
         t = threading.Thread(target=_refresh_loop, daemon=True, name="ThreatIntelRefresh")
+        self._components.attach("service:threat_intel_refresh", t)
         self._threads.append(t)
         t.start()
+        self._components.mark_started("service:threat_intel_refresh")
 
     def _start_honeypot(self) -> None:
         """Open canary ports if enabled; hits flow straight to the alert manager."""
         if not self.config.monitoring.honeypot_enabled:
             return
-        self._honeypot = HoneypotService(self.config, on_alert=self._alert_manager.process_one)
-        self._honeypot.start()
+
+        def _on_alert(alert):
+            self._components.record_activity("input:honeypot")
+            return self._alert_manager.process_one(alert)
+
+        self._honeypot = HoneypotService(self.config, on_alert=_on_alert)
+        self._components.attach("input:honeypot", self._honeypot)
+        if self._honeypot.start():
+            self._components.mark_started("input:honeypot")
+        else:
+            self._components.mark_degraded("input:honeypot", "no canary ports could bind")
 
     def _start_dashboard(self) -> None:
         """Start the web dashboard if enabled."""
@@ -656,6 +751,7 @@ class SentinelPi:
         from .ui.dashboard import create_app, DashboardServer, FLASK_AVAILABLE
         if not FLASK_AVAILABLE:
             logger.warning("Flask not installed — dashboard not available.")
+            self._components.mark_degraded("service:dashboard", "Flask unavailable")
             return
 
         app = create_app(
@@ -666,12 +762,17 @@ class SentinelPi:
             alert_manager=self._alert_manager,
             responder_manager=self._responder_manager,
             watchdog=self._watchdog,
+            component_registry=self._components,
         )
         if app is None:
             logger.warning("Dashboard app could not be created — dashboard not started.")
             return
         self._dashboard_server = DashboardServer(app, self.config)
         self._dashboard_server.start()
+        self._components.attach("service:dashboard", self._dashboard_server)
+        self._components.mark_started("service:dashboard")
+        if self.config.cluster.collector_key:
+            self._components.mark_started("service:collector_ingest")
 
     def _maintenance_loop(self) -> None:
         """
@@ -702,6 +803,7 @@ class SentinelPi:
             ):
                 try:
                     alerts = self._watchdog.check()
+                    self._components.record_activity("service:watchdog")
                     if alerts:
                         self._alert_manager.process(alerts)
                 except Exception as exc:
@@ -757,6 +859,8 @@ class SentinelPi:
 
         logger.info("Starting web dashboard...")
         self._watchdog = OperationalWatchdog(self.config, self._capture_queue, self._threads)
+        self._components.attach("service:watchdog", self._watchdog)
+        self._components.mark_started("service:watchdog")
         self._watchdog.set_event_sources_active(self._event_router_started)
         self._start_dashboard()
 
@@ -831,6 +935,8 @@ class SentinelPi:
 
         logger.info("Closing database...")
         self._db.close()
+        if hasattr(self, "_components"):
+            self._components.mark_all_stopped()
 
         logger.info("SentinelPi stopped cleanly.")
 

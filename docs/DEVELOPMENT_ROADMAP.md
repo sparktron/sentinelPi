@@ -104,9 +104,9 @@ JSON errors for malformed, unsupported, oversized, or unauthorized requests.
 Full validation passes with 469 tests, Ruff across `src` and `tests`, mypy across all 64 source
 files, compileall, and the shipped configuration check.
 
-### Feature Updates After Correctness Work
+### Phase 4: Operational Visibility And Control (Feature Work)
 
-- [ ] Runtime component registry/capability matrix shared by startup, preflight, status, and tests.
+- [x] Runtime component registry/capability matrix shared by startup, preflight, status, and tests.
 - [ ] Per-detector baseline readiness, reset/freeze controls, and poisoning/staleness indicators.
 - [ ] Per-sensor/exporter credentials with identity binding and replay protection.
 - [ ] Sanitized PCAP/flow integration fixtures covering IPv6, UDP, SYN handshakes, and observation
@@ -114,6 +114,14 @@ files, compileall, and the shipped configuration check.
 - [ ] Unified trust/whitelist/mute policy with expiry, audit history, preview, and undo.
 - [ ] Notification retry/delivery tracking and optional high-severity dead-letter storage.
 - [ ] Delivered daily/weekly reports with timezone/DST and missed-run handling.
+
+Status: in progress 2026-07-13. The first checkpoint introduces one ordered manifest for every
+input, inventory component, detector, notifier, responder, and runtime service. Startup event
+routing and polling now derive from this registry; preflight exposes the same configured/disabled
+matrix; `/api/status` reports configured, ready, started, degraded, and stopped states plus activity
+counters/timestamps. Wiring tests assert configured routed components are actually bound.
+Full validation passes with 475 tests, Ruff across `src` and `tests`, mypy across all 65 source
+files, compileall, and the shipped configuration check.
 
 ## Findings To Fix
 

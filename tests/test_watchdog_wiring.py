@@ -4,6 +4,8 @@ import queue
 import threading
 
 from sentinelpi.main import SentinelPi
+from sentinelpi.config.manager import Config
+from sentinelpi.runtime_registry import RuntimeComponentRegistry
 
 
 class _Watchdog:
@@ -37,7 +39,10 @@ def test_event_router_records_watchdog_activity():
     app._threads = []
     app._watchdog = _Watchdog()
     app._alert_manager = type("AM", (), {"process": lambda self, alerts: None})()
-    app._build_event_detectors = lambda: [_Detector()]
+    detector = _Detector()
+    app._components = RuntimeComponentRegistry(Config())
+    app._components.attach("detector:arp", detector)
+    app._build_event_detectors = lambda: [detector]
 
     app._ensure_event_router()
     assert app._watchdog.event_sources_active is True
@@ -45,6 +50,10 @@ def test_event_router_records_watchdog_activity():
 
     try:
         assert app._watchdog.events == 1 or _wait_for(lambda: app._watchdog.events == 1)
+        arp = next(
+            item for item in app._components.snapshot() if item["key"] == "detector:arp"
+        )
+        assert arp["activity_count"] == 1
     finally:
         app._stop_event.set()
         for thread in app._threads:
@@ -53,6 +62,7 @@ def test_event_router_records_watchdog_activity():
 
 def test_threat_intel_refresh_records_success_and_failure():
     app = SentinelPi.__new__(SentinelPi)
+    app._components = RuntimeComponentRegistry(Config())
     app.config = type("Cfg", (), {
         "threat_intel": type("TI", (), {"refresh_interval_hours": 1})()
     })()
@@ -100,6 +110,7 @@ def test_threat_intel_refresh_records_success_and_failure():
 
 def test_threat_intel_false_result_records_failure_without_exception():
     app = SentinelPi.__new__(SentinelPi)
+    app._components = RuntimeComponentRegistry(Config())
     app.config = type("Cfg", (), {
         "threat_intel": type("TI", (), {"refresh_interval_hours": 1})()
     })()

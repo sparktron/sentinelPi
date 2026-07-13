@@ -35,6 +35,7 @@ from typing import Callable, List, Optional, Type
 from ..models import Alert, AlertCategory, Severity
 from ..alerts.notifiers import BaseNotifier
 from ..responders.base import BaseResponder
+from ..runtime_registry import component_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,30 @@ class CheckResult:
 def run_preflight(config) -> List[CheckResult]:
     """Run all active preflight checks and return their results."""
     results: List[CheckResult] = []
+    results.extend(_check_component_manifest(config))
     results.extend(_check_notifiers(config))
     results.extend(_check_responders(config))
     results.extend(_check_environment(config))
+    return results
+
+
+def _check_component_manifest(config) -> List[CheckResult]:
+    """Expose the same configured/disabled matrix used by runtime startup."""
+    results = []
+    for component in component_manifest(config):
+        routes = f"; routes={','.join(component.routes)}" if component.routes else ""
+        if component.configured:
+            results.append(CheckResult(
+                f"component:{component.key}",
+                "ok",
+                f"configured {component.kind}{routes}",
+            ))
+        else:
+            results.append(CheckResult(
+                f"component:{component.key}",
+                "skip",
+                "disabled by effective configuration",
+            ))
     return results
 
 

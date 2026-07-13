@@ -131,6 +131,7 @@ class PacketCapture:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._dropped_count = 0
+        self.emitted = 0
         self._recent_syns: OrderedDict[
             tuple[str, int, str, int], datetime
         ] = OrderedDict()
@@ -374,6 +375,7 @@ class PacketCapture:
         """Non-blocking enqueue; drop and count if queue is full."""
         try:
             self.event_queue.put_nowait(event)
+            self.emitted += 1
         except queue.Full:
             self._dropped_count += 1
             if self._dropped_count % 1000 == 0:

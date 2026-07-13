@@ -100,6 +100,7 @@ def create_app(
     alert_manager: "AlertManager",
     responder_manager=None,
     watchdog: Optional["OperationalWatchdog"] = None,
+    component_registry=None,
 ) -> Optional["Flask"]:
     """
     Create and configure the Flask application.
@@ -226,7 +227,9 @@ def create_app(
     @app.route("/api/status")
     @require_token
     def api_status():
-        return jsonify(_status_payload(db, device_tracker, baseline, alert_manager, watchdog))
+        return jsonify(_status_payload(
+            db, device_tracker, baseline, alert_manager, watchdog, component_registry
+        ))
 
     @app.route("/api/events")
     @require_token
@@ -248,7 +251,9 @@ def create_app(
         def _stream():
             tick = 0
             while True:
-                payload = _status_payload(db, device_tracker, baseline, alert_manager, watchdog)
+                payload = _status_payload(
+                    db, device_tracker, baseline, alert_manager, watchdog, component_registry
+                )
                 payload["tick"] = tick
                 yield f"event: dashboard\ndata: {json.dumps(payload, default=str)}\n\n"
                 if once:
@@ -536,7 +541,9 @@ def _alert_to_dict(alert) -> dict:
     }
 
 
-def _status_payload(db, device_tracker, baseline, alert_manager, watchdog) -> dict:
+def _status_payload(
+    db, device_tracker, baseline, alert_manager, watchdog, component_registry=None
+) -> dict:
     now = clock.now()
     last_24h = now - timedelta(hours=24)
     counts = db.get_alert_counts_by_severity(last_24h)
@@ -551,6 +558,7 @@ def _status_payload(db, device_tracker, baseline, alert_manager, watchdog) -> di
         "baseline": baseline_summary,
         "alert_manager": manager_stats,
         "watchdog": watchdog.get_status() if watchdog is not None else None,
+        "components": component_registry.snapshot() if component_registry is not None else [],
         # Compact health view for the dashboard's degraded-health badge.
         "health": _health_summary(watchdog),
     }

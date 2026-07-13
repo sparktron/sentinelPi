@@ -31,7 +31,10 @@ NetFlow/IPFIX ingest has bounded exporter/domain trust state. The full suite now
 database/persistence paths fail safely, device trust is live and auditable, and collector payloads
 are size- and schema-validated. The full suite now contains 469 tests.
 
-The next most important work is the feature backlog after the correctness phases.
+**Phase 4 status (2026-07-13): in progress.** The runtime wiring manifest/capability matrix is
+shipped across startup, preflight, status, and tests. The full suite now contains 475 tests.
+
+The next most important work is the remaining Phase 4 feature backlog.
 
 Severity legend: **Critical** = a core advertised security behavior is absent or bypassed in normal
 operation; **High** = material detection, response, security, or operator-trust failure;
@@ -322,10 +325,10 @@ add a repeated-initialization test.
 
 These additions follow directly from the defects and current architecture, in priority order:
 
-1. **Runtime wiring manifest and capability status.** Maintain one registry describing every input,
-   detector, notifier, and responder, and expose whether each is configured, started, degraded, and
-   producing events. Use it to drive startup, preflight, tests, and `/api/status` so a component
-   cannot be implemented yet silently absent.
+1. **Runtime wiring manifest and capability status — Shipped 2026-07-13.** One ordered registry now
+   describes every input, inventory component, detector, notifier, responder, and service. It drives
+   event/poll routing, appears in preflight and `/api/status`, tracks lifecycle/activity, and is
+   covered by binding tests so a configured routed component cannot remain silently absent.
 2. **Durable response ledger and reconciliation.** Persist approvals, executions, expiry, rollback,
    and command output; reconcile firewall/DNS/ARP state after restart. This unlocks reliable timed
    quarantine and a real audit trail.

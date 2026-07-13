@@ -192,6 +192,9 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
   timeline view, per-host drill-down. _Partially shipped (2026-06-14): `/api/events` provides an
   SSE dashboard stream and the frontend live-refreshes status, alerts, and response actions with a
   polling fallback._
+  - ✅ **Runtime capability matrix.** _Shipped (2026-07-13): one registry describes configured and
+    live inputs, detectors, notifiers, responders, and services; it drives event/poll routing and is
+    exposed through preflight plus `/api/status` with lifecycle and activity state._
   - ✅ **Browser login + session auth.** _Shipped (2026-06-06): the H2 header-only token hardening
     had made the dashboard unreachable from a browser (the index route 401'd on navigation). Added a
     `/login` page (token posted in the form body, never the URL) that sets a signed, HttpOnly,

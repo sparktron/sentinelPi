@@ -54,6 +54,7 @@ class ResponderManager:
         # Optional callback fired when an action is queued for approval, so an
         # actionable notifier (e.g. ntfy) can push Approve/Reject buttons.
         self._pending_notifier: Optional[Callable[[ResponderAction], None]] = None
+        self._activity_callback: Optional[Callable[[BaseResponder], None]] = None
         self._persistence_health = DurablePersistenceHealth(
             db, "health.persistence.responses"
         )
@@ -135,6 +136,10 @@ class ResponderManager:
         """Register a callback invoked with each action newly queued for approval."""
         self._pending_notifier = callback
 
+    def set_activity_callback(self, callback: Callable[[BaseResponder], None]) -> None:
+        """Observe applicable response plans for runtime capability status."""
+        self._activity_callback = callback
+
     def handle(self, alert: Alert) -> List[ResponderAction]:
         """
         Plan, and depending on gating dry-run / queue-for-approval / execute,
@@ -155,6 +160,8 @@ class ResponderManager:
                 action = responder.plan(alert)
                 if action is None:
                     continue
+                if self._activity_callback is not None:
+                    self._activity_callback(responder)
                 action.dry_run = dry_run
                 action.alert_id = alert.alert_id
                 # Establish a durable plan before approval or execution. If the
