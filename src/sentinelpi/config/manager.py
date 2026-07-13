@@ -387,6 +387,7 @@ class CorrelationConfig:
     min_sensors: int = 2        # actor seen by >= this many sensors -> incident
     min_targets: int = 5        # OR actor hit >= this many distinct targets -> incident
     cooldown_seconds: int = 600
+    max_actors: int = 4096      # hard ceiling for high-cardinality/spoofed actor state
 
 
 @dataclass
@@ -881,6 +882,7 @@ def validate_config(config: Config) -> List[ConfigIssue]:
     check_non_negative_int("correlation.min_sensors", config.correlation.min_sensors)
     check_non_negative_int("correlation.min_targets", config.correlation.min_targets)
     check_non_negative_int("correlation.cooldown_seconds", config.correlation.cooldown_seconds)
+    check_positive_int("correlation.max_actors", config.correlation.max_actors)
 
     check_non_negative_int("flow.conntrack_interval_seconds", config.flow.conntrack_interval_seconds)
     check_port("flow.netflow_port", config.flow.netflow_port)

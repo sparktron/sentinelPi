@@ -419,6 +419,7 @@ correlation:
   min_sensors: 2          # actor seen by >= this many sensors -> incident
   min_targets: 5          # OR actor hit >= this many distinct targets -> incident
   cooldown_seconds: 600
+  max_actors: 4096        # hard memory ceiling for unique actor state
 
 # =============================================================================
 # FLOW INGESTION  (Phase 3 — router/firewall coverage)

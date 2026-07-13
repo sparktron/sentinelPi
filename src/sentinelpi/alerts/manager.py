@@ -353,7 +353,7 @@ class AlertManager:
     def get_stats(self) -> dict:
         """Return manager statistics for dashboard."""
         with self._lock:
-            return {
+            stats: dict = {
                 "total_processed": self._total_processed,
                 "total_suppressed": self._total_suppressed,
                 "total_fired": self._total_fired,
@@ -362,3 +362,6 @@ class AlertManager:
                     if self._total_processed > 0 else 0.0
                 ),
             }
+        if self._correlator is not None:
+            stats["correlator"] = self._correlator.state_metrics
+        return stats

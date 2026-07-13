@@ -211,7 +211,7 @@ cache collapses retransmitted SYNs once per 5-tuple/60-second window before even
 port-scan detector also rejects synthetic SYN-ACK events. Regressions cover `S`, `SA`, retransmits,
 expiry, and the cache ceiling.
 
-#### M4. Incident-correlation actor maps can grow without bound
+#### M4. Incident-correlation actor maps can grow without bound — Resolved
 
 **Issue:** each actor deque is capped at 500 events, but actors themselves are never evicted from
 `_events`, and `_last_incident` is never pruned. Unique spoofed or forwarded actors therefore grow
@@ -220,8 +220,10 @@ both dictionaries for the life of the collector.
 **Evidence:** `src/sentinelpi/alerts/correlator.py:49-56` and
 `src/sentinelpi/alerts/correlator.py:70-106`.
 
-**Required fix:** remove empty actor deques after window pruning, expire cooldown entries, and add a
-hard key ceiling with observable eviction metrics. Test many one-shot actors over multiple windows.
+**Implemented change:** periodic cleanup removes empty actor deques and expired cooldowns. A
+configurable `correlation.max_actors` ceiling evicts least-recently-seen actors deterministically,
+and `/api/status` exposes tracked state plus eviction/expiry counters. High-cardinality and
+multi-window regressions cover the bounds.
 
 #### M5. Database connection storage is global across Database instances
 

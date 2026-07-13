@@ -184,6 +184,8 @@ Everything above gets you running. Below is the full reference — expand what y
 
 **Incident correlation** (optional) folds related alerts into a single `INCIDENT` with a timeline —
 e.g. *new device → port scan → lateral movement*, or one actor seen across multiple sensors/targets.
+Actor/cooldown state expires by window and is capped by `correlation.max_actors`; eviction metrics
+are exposed through `/api/status`.
 
 **Intelligence & enrichment** layered on top:
 - **Threat-intel feeds** — abuse.ch URLhaus / Feodo Tracker, Spamhaus DROP; cached locally and refreshed daily.
