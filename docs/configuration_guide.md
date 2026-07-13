@@ -75,6 +75,16 @@ monitoring:
   self_monitoring_enabled: true    # SYSTEM alerts if SentinelPi itself degrades
 ```
 
+Disabling `dns_monitoring_enabled` removes DNS from the packet-capture filter and detector route.
+Active discovery performs a bounded IPv4 ARP sweep at the configured interval and feeds replies
+through the normal device inventory. File-integrity monitoring hashes configured files with
+SHA-256 and alerts on content or availability changes. Interface byte counters are sampled once a
+minute for traffic-spike baselining.
+
+Daily and weekly reports run after `reporting.daily_report_hour` in the host's local timezone and
+are routed through the normal alert pipeline. The last delivered period is persisted so restarting
+the service does not duplicate a report.
+
 `active_hours_detection_enabled` learns when each host is normally active.
 `host_profile_detection_enabled` learns each host's usual destination ports,
 internal peers, L4 protocols (tcp/udp/icmp), and per-flow transfer-size buckets,

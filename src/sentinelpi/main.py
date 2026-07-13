@@ -47,6 +47,7 @@ from .config.preflight import run_preflight
 from .storage.database import Database
 from .baseline.engine import BaselineEngine
 from .inventory.device_tracker import DeviceTracker
+from .inventory.active_discovery import ActiveDiscovery
 from .alerts.manager import AlertManager
 from .alerts.notifiers import (
     ConsoleNotifier, FileNotifier, EmailNotifier, WebhookNotifier, NtfyNotifier, TwilioSMSNotifier,
@@ -70,13 +71,16 @@ from .detectors.asn_detector import ASNReputationDetector
 from .detectors.active_hours_detector import ActiveHoursDetector
 from .detectors.host_profile_detector import HostProfileDetector
 from .detectors.threat_intel_detector import ThreatIntelDetector
+from .detectors.file_integrity_detector import FileIntegrityDetector
+from .detectors.traffic_detector import TrafficSpikeDetector
 from .intel.threat_feeds import ThreatIntelService
-from .capture.packet_capture import PacketCapture
+from .capture.packet_capture import PacketCapture, build_bpf_filter
 from .capture.flow_ingest import ConntrackFlowSource, NetFlowCollector, FilterlogSource
 from .capture.honeypot import HoneypotService
 from .utils.geo import init_geo
 from .utils.asn import init_asn
 from .utils.watchdog import OperationalWatchdog
+from .reporting import ReportScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +229,24 @@ class SentinelPi:
         self._dns_detector = DNSDetector(**detector_kwargs)
         self._lateral_detector = LateralMovementDetector(**detector_kwargs)
         self._auth_detector = AuthLogDetector(**detector_kwargs)
+        self._traffic_detector = TrafficSpikeDetector(**detector_kwargs)
+
+        self._file_integrity_detector: Optional[FileIntegrityDetector] = None
+        if self.config.monitoring.file_integrity_enabled:
+            self._file_integrity_detector = FileIntegrityDetector(**detector_kwargs)
+
+        self._active_discovery: Optional[ActiveDiscovery] = None
+        if self.config.monitoring.active_discovery_enabled:
+            self._active_discovery = ActiveDiscovery(self.config, self._device_tracker)
+
+        self._report_scheduler: Optional[ReportScheduler] = None
+        if (
+            self.config.reporting.daily_report_enabled
+            or self.config.reporting.weekly_report_enabled
+        ):
+            self._report_scheduler = ReportScheduler(
+                self.config, self._db, self._device_tracker, self._baseline
+            )
 
         # Encrypted-DNS bypass detector (event-driven, no extra deps).
         self._doh_detector: Optional[DoHDetector] = None
@@ -405,6 +427,9 @@ class SentinelPi:
         self._packet_capture = PacketCapture(
             interfaces=self.config.network.interfaces,
             event_queue=self._capture_queue,
+            bpf_filter=build_bpf_filter(
+                dns_monitoring_enabled=self.config.monitoring.dns_monitoring_enabled
+            ),
             promisc=True,   # required for SPAN/mirror visibility and full LAN coverage
         )
         if mirror:
@@ -423,12 +448,13 @@ class SentinelPi:
         """Ordered list of detectors that consume packet-capture/flow events."""
         event_detectors = [
             self._arp_detector,
-            self._dns_detector,
             self._beacon_detector,
             self._connection_detector,
             self._port_scan_detector,
             self._lateral_detector,
         ]
+        if self.config.monitoring.dns_monitoring_enabled:
+            event_detectors.append(self._dns_detector)
         for optional in (
             self._doh_detector,
             self._geo_country_detector,
@@ -538,7 +564,7 @@ class SentinelPi:
 
     def _build_pollers(self) -> list:
         """Return every component driven by the periodic polling loop."""
-        return [
+        pollers = [
             (self._device_tracker, 30, "DeviceTracker"),
             (self._connection_detector, 60, "ConnectionDetector"),
             (self._port_scan_detector, 60, "PortScanDetector"),
@@ -546,7 +572,20 @@ class SentinelPi:
             (self._beacon_detector, 60, "BeaconDetector"),
             (self._lateral_detector, 60, "LateralMovementDetector"),
             (self._arp_detector, 60, "ARPDetector"),
+            (self._traffic_detector, 60, "TrafficSpikeDetector"),
         ]
+        for component, interval, name in (
+            (
+                self._active_discovery,
+                self.config.monitoring.active_discovery_interval_seconds,
+                "ActiveDiscovery",
+            ),
+            (self._file_integrity_detector, 60, "FileIntegrityDetector"),
+            (self._report_scheduler, 60, "ReportScheduler"),
+        ):
+            if component is not None:
+                pollers.append((component, interval, name))
+        return pollers
 
     def _start_polling_threads(self) -> None:
         """Start all detector and inventory polling threads."""

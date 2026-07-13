@@ -53,7 +53,7 @@ have a durable audit record, and threat-feed health is visible per feed.
 - [x] Make normal startup validate configuration; fail explicit missing/malformed configs closed;
   reject unknown keys.
 - [x] Define profile-versus-explicit-threshold precedence and test it.
-- [ ] Implement or remove the dead switches for DNS disable, active discovery, file integrity,
+- [x] Implement or remove the dead switches for DNS disable, active discovery, file integrity,
   scheduled reports, and traffic-spike monitoring.
 - [ ] Split passive and active-response deployment capabilities; default to `NET_RAW` without
   `NET_ADMIN`, and make the configured sinkhole target writable when that responder is enabled.
@@ -65,6 +65,8 @@ fall back from an explicitly requested config, and default deployments use least
 Status: in progress 2026-07-12. Normal startup now validates before subsystem initialization,
 explicit and environment-selected config load failures are fatal, and unknown YAML keys report
 their full path. Threshold precedence is now defaults, then profile, then explicit values.
+DNS capture/detection disabling, bounded active ARP discovery, SHA-256 file monitoring,
+restart-safe scheduled summaries, and per-interface traffic-spike polling are now wired and tested.
 
 ### Phase 3: Resilience And Policy Consistency (Medium)
 

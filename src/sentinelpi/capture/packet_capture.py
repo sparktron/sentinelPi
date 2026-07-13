@@ -81,13 +81,16 @@ class CapturedConnection:
 # Union type for queued events
 CaptureEvent = CapturedARP | CapturedDNS | CapturedConnection
 
-# BPF filter: capture ARP, DNS (UDP 53), and TCP SYNs only.
-# This keeps CPU load minimal while feeding the detectors what they need.
-DEFAULT_BPF_FILTER = (
-    "arp or "
-    "(udp port 53) or "
-    "(tcp[tcpflags] & tcp-syn != 0)"
-)
+def build_bpf_filter(*, dns_monitoring_enabled: bool = True) -> str:
+    """Build the capture filter from runtime-enabled packet features."""
+    clauses = ["arp", "(tcp[tcpflags] & tcp-syn != 0)"]
+    if dns_monitoring_enabled:
+        clauses.insert(1, "(udp port 53)")
+    return " or ".join(clauses)
+
+
+# Default remains the full passive feature set for direct PacketCapture users.
+DEFAULT_BPF_FILTER = build_bpf_filter()
 
 
 class PacketCapture:

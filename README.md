@@ -175,6 +175,8 @@ Everything above gets you running. Below is the full reference — expand what y
 | **DoH / DoT** | Clients bypassing local DNS via encrypted resolvers | Port + resolver match |
 | **Lateral movement** | Admin-protocol fan-out between internal hosts | Rule + baseline |
 | **Auth log** | SSH brute force, new logins, sudo abuse | Pattern matching |
+| **File integrity** | Changes, deletion, or restoration of monitored files | SHA-256 polling |
+| **Traffic spike** | Interface transfer-rate spikes above learned volume | Per-interface baseline |
 | **Threat intel** | Connections to known-bad IPs/domains | Blocklist match |
 | **GeoIP / ASN** | First connection to a new country; bad-reputation networks | Per-host baseline |
 | **Active hours** | Activity outside a host's learned schedule | Time-window baseline |
@@ -301,7 +303,8 @@ Route alerts wherever you live:
 - **SIEM export** — stream to a syslog collector as **ECS** (Elastic Common Schema JSON) or **CEF**
   (ArcSight) over UDP/TCP with RFC 5424 framing → feeds Wazuh, Splunk, Elastic.
 - **OpenTelemetry** — POST alerts as **OTLP/HTTP** JSON logs to a collector's `/v1/logs` (no OTel SDK dependency).
-- **Daily / weekly reports** — rolled-up digests including a health summary from the watchdog.
+- **Daily / weekly reports** — restart-safe local-time digests routed through the alert pipeline,
+  with alert, device, and baseline summaries.
 
 Every network channel participates in `sentinelpi --check`, which sends a clearly-labelled test alert
 (or connects without sending, for email) so you can prove delivery before going live.

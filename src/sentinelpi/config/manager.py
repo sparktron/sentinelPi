@@ -689,8 +689,8 @@ def validate_config(config: Config) -> List[ConfigIssue]:
 
     if config.monitoring.sensitivity_profile not in {"conservative", "balanced", "aggressive"}:
         add("monitoring.sensitivity_profile", "must be one of: conservative, balanced, aggressive")
-    check_non_negative_int("monitoring.active_discovery_interval_seconds",
-                           config.monitoring.active_discovery_interval_seconds)
+    check_positive_number("monitoring.active_discovery_interval_seconds",
+                          config.monitoring.active_discovery_interval_seconds)
     check_non_negative_int("monitoring.baseline_learning_hours", config.monitoring.baseline_learning_hours)
     check_non_negative_int("monitoring.active_hours_min_known", config.monitoring.active_hours_min_known)
     check_non_negative_int("monitoring.host_profile_min_known_ports",
@@ -742,6 +742,22 @@ def validate_config(config: Config) -> List[ConfigIssue]:
     else:
         for idx, port in enumerate(config.monitoring.honeypot_ports):
             check_port(f"monitoring.honeypot_ports[{idx}]", port)
+    if not isinstance(config.monitoring.file_integrity_paths, list):
+        add("monitoring.file_integrity_paths", "must be a list")
+    else:
+        for idx, path in enumerate(config.monitoring.file_integrity_paths):
+            if not isinstance(path, str) or not path:
+                add(f"monitoring.file_integrity_paths[{idx}]", "must be a non-empty path")
+
+    for path, hour in (("reporting.daily_report_hour", config.reporting.daily_report_hour),):
+        if not is_int(hour) or hour < 0 or hour > 23:
+            add(path, "must be an hour from 0 to 23")
+    if (
+        not is_int(config.reporting.weekly_report_day)
+        or config.reporting.weekly_report_day < 0
+        or config.reporting.weekly_report_day > 6
+    ):
+        add("reporting.weekly_report_day", "must be a day from 0 (Sunday) to 6 (Saturday)")
 
     t = config.thresholds
     check_positive_number("thresholds.port_scan_ports_per_minute", t.port_scan_ports_per_minute)

@@ -109,22 +109,27 @@ class DeviceTracker:
         service polling wrapper dispatches these through AlertManager.
         """
         entries = read_arp_table()
-        alerts: List[Alert] = []
 
         # Keep authoritative DHCP identity fresh each poll.
         if self._dhcp is not None:
             self._dhcp.refresh()
 
-        for entry in entries:
-            entry.mac = normalize_mac(entry.mac)
-            new_alerts = self._process_arp_entry(entry)
-            alerts.extend(new_alerts)
+        alerts = self.process_entries(entries)
 
         # Check for excessive ARP churn
         churn_alert = self._check_arp_churn()
         if churn_alert:
             alerts.append(churn_alert)
 
+        return alerts
+
+    def process_entries(self, entries: List[ARPEntry]) -> List[Alert]:
+        """Update inventory from passive or active ARP observations."""
+        alerts: List[Alert] = []
+        for entry in entries:
+            entry.mac = normalize_mac(entry.mac)
+            new_alerts = self._process_arp_entry(entry)
+            alerts.extend(new_alerts)
         return alerts
 
     def _process_arp_entry(self, entry: ARPEntry) -> List[Alert]:

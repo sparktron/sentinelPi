@@ -102,7 +102,7 @@ The service can use stale or empty feeds indefinitely while `/api/status` report
 **Implemented change:** the refresh loop now honors the service result and sends per-feed attempt,
 success, error, age, and staleness state to the watchdog. Total and partial failures are covered.
 
-#### H4. Several public configuration switches have no runtime effect
+#### H4. Several public configuration switches have no runtime effect — Resolved
 
 **Issue:** the repository exposes and documents behaviors that are not implemented or not wired:
 
@@ -121,9 +121,10 @@ describes several as shipped.
 `src/sentinelpi/config/manager.py:280-285`; no runtime references outside preflight/tests for the
 listed settings; `BaselineEngine.record_traffic()`/`check_traffic_spike()` have no production caller.
 
-**Required fix:** either implement and test each lifecycle path or remove the option and correct the
-documentation. Add a configuration-to-runtime coverage test so every public feature flag has an
-observable wiring point.
+**Implemented change:** DNS disable now changes both capture and detector routing; active discovery
+feeds bounded ARP sweeps through inventory; file-integrity polling hashes configured files;
+daily/weekly report periods are restart-safe; and interface byte counters drive traffic-spike
+baselines. Unit and service-wiring regressions cover each runtime path.
 
 #### H5. Default deployments grant more network privilege than passive capture needs
 

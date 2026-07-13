@@ -38,6 +38,8 @@ def test_validate_config_rejects_invalid_ports_and_enums():
     config.monitoring.self_monitoring_queue_warn_ratio = 1.5
     config.notifications.webhook_min_severity = "urgent"
     config.response.firewall_backend = "pf"
+    config.reporting.daily_report_hour = 24
+    config.reporting.weekly_report_day = 7
 
     paths = _issue_paths(config)
 
@@ -46,6 +48,8 @@ def test_validate_config_rejects_invalid_ports_and_enums():
     assert "monitoring.self_monitoring_queue_warn_ratio" in paths
     assert "notifications.webhook_min_severity" in paths
     assert "response.firewall_backend" in paths
+    assert "reporting.daily_report_hour" in paths
+    assert "reporting.weekly_report_day" in paths
 
 
 def test_validate_config_rejects_invalid_siem_settings():
