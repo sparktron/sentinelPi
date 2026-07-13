@@ -28,11 +28,13 @@ from ..utils import clock
 # Lifecycle of an action:
 #   planned   - dry-run only, never executes
 #   pending   - armed but awaiting human approval
+#   executing - durably recorded immediately before execution
 #   executed  - ran successfully
 #   failed    - ran but errored
 #   rejected  - a human declined it
 PLANNED = "planned"
 PENDING = "pending"
+EXECUTING = "executing"
 EXECUTED = "executed"
 FAILED = "failed"
 REJECTED = "rejected"

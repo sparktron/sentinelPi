@@ -246,9 +246,12 @@ the host without a durable alert record, weakening the audit trail and making re
 
 **Evidence:** `src/sentinelpi/alerts/manager.py:164-213`.
 
-**Required fix:** define failure semantics explicitly. At minimum, prevent active response when the
-source alert or planned action cannot be persisted, emit a high-priority health signal through an
-independent path, and make the return/result distinguish persisted, dispatched, and failed states.
+**Implemented change:** alert persistence is now a fail-closed boundary before scoring,
+notification, correlation, or response. Failed dedup reservations are released for retry and are
+counted separately from suppressed/dispatched alerts. Response plans and an `executing` transition
+must both be durable before a command can run; approvals, rejections, and expiration also retain
+their prior state when the required write fails. Both paths emit critical logs and store durable
+degraded/recovered health in `app_state`, surfaced by the dashboard status payload after restart.
 
 #### M7. Response approvals and action history disappeared on restart — Resolved
 

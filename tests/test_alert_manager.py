@@ -51,6 +51,43 @@ class TestAlertManager:
         assert saved is not None
         assert saved.title == "Test Alert"
 
+    def test_persistence_failure_stops_dispatch_and_is_durable(
+        self, config, db, device_tracker, monkeypatch
+    ):
+        """An unpersisted alert must not notify, score, correlate, or respond."""
+        manager = AlertManager(config, db, device_tracker)
+        notifier = MagicMock()
+        responder_manager = MagicMock()
+        responder_manager.persistence_health = {"degraded": False}
+        manager.add_notifier(notifier)
+        manager.set_responder_manager(responder_manager)
+        monkeypatch.setattr(device_tracker, "mark_device_suspicious", MagicMock())
+
+        save_alert = db.save_alert
+        monkeypatch.setattr(db, "save_alert", MagicMock(side_effect=RuntimeError("disk full")))
+        alert = make_test_alert(dedup_key="persist:failure")
+
+        assert manager.process_one(alert) is False
+        assert db.get_alert(alert.alert_id) is None
+        notifier.send.assert_not_called()
+        responder_manager.handle.assert_not_called()
+        device_tracker.mark_device_suspicious.assert_not_called()
+
+        stats = manager.get_stats()
+        assert stats["total_fired"] == 0
+        assert stats["total_persistence_failed"] == 1
+        assert stats["persistence"]["alerts"]["degraded"] is True
+
+        restarted = AlertManager(config, db, device_tracker)
+        assert restarted.get_stats()["persistence"]["alerts"]["degraded"] is True
+
+        # The failed dedup reservation is removed, so the same alert can be
+        # retried after storage recovers and the durable health state clears.
+        monkeypatch.setattr(db, "save_alert", save_alert)
+        assert manager.process_one(alert) is True
+        assert manager.get_stats()["persistence"]["alerts"]["degraded"] is False
+        assert manager.get_stats()["persistence"]["alerts"]["failed_at"] is not None
+
     def test_records_suspicion_history_point(self, alert_manager, db, device_tracker):
         """Processing an alert for a known host appends a suspicion-trend point."""
         from sentinelpi.models import Device

@@ -79,7 +79,7 @@ Full validation passes with 443 tests, Ruff, mypy, compileall, and the sample co
 - [x] Exclude SYN-ACK/retransmit artifacts from connection-initiation signals.
 - [x] Bound incident-correlator actor/cooldown maps.
 - [x] Scope SQLite thread-local connections per `Database` instance/path.
-- [ ] Prevent active response when alert/action persistence fails and surface durable health state.
+- [x] Prevent active response when alert/action persistence fails and surface durable health state.
 - [ ] Make dashboard trust a locked, live, auditable policy that actually changes detector behavior.
 - [ ] Validate and size-limit collector payloads; return structured 4xx errors.
 
@@ -90,7 +90,10 @@ Status: in progress 2026-07-12. Passive capture now admits only SYN-without-ACK 
 collapses retransmitted 5-tuples for 60 seconds with a bounded cache. Correlation now expires empty
 actor/cooldown state, enforces a configurable LRU actor ceiling, and reports eviction metrics.
 SQLite thread-local connection state is now owned by each `Database` instance, so independent paths
-cannot reuse or close one another's connection on the same thread.
+cannot reuse or close one another's connection on the same thread. Alert dispatch now stops before
+notification, scoring, correlation, or response if its source record cannot be saved. Response
+plans and pre-execution intent are mandatory persistence gates, and both paths publish durable
+degraded/recovered health through the status payload and critical logs.
 
 ### Feature Updates After Correctness Work
 

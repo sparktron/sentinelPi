@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from sentinelpi.models import Alert, AlertCategory, Severity
-from sentinelpi.responders.base import EXECUTED, EXPIRED, PENDING, REJECTED
+import pytest
+
+from sentinelpi.responders.base import EXECUTED, EXPIRED, FAILED, PENDING, PLANNED, REJECTED
 from sentinelpi.responders.firewall import FirewallResponder
 from sentinelpi.responders.manager import ResponderManager
 
@@ -74,6 +76,53 @@ def test_rejection_is_persisted(config, db):
     persisted = {item.action_id: item for item in restarted.recent_actions()}
     assert persisted[action.action_id].status == REJECTED
     assert restarted.pending_actions() == []
+
+
+@pytest.mark.parametrize("failed_write", [1, 2])
+def test_response_does_not_execute_without_durable_audit_plan(
+    config, db, monkeypatch, failed_write
+):
+    """Both the plan and pre-execution intent are fail-closed persistence gates."""
+    _arm(config)
+    config.response.require_approval = False
+    runner = _RecordingRunner()
+    manager = ResponderManager(config, db)
+    manager.add_responder(FirewallResponder(config, runner=runner))
+    save_response_action = db.save_response_action
+    writes = 0
+
+    def fail_selected_write(action):
+        nonlocal writes
+        writes += 1
+        if writes == failed_write:
+            raise RuntimeError("database unavailable")
+        save_response_action(action)
+
+    monkeypatch.setattr(db, "save_response_action", fail_selected_write)
+
+    action = manager.handle(_alert())[0]
+
+    assert action.status == FAILED
+    assert "persist" in action.error
+    assert runner.calls == []
+    assert manager.persistence_health["degraded"] is True
+
+    persisted = next(
+        (
+            row
+            for row in db.get_response_actions()
+            if row["action_id"] == action.action_id
+        ),
+        None,
+    )
+    if failed_write == 1:
+        assert persisted is None
+    else:
+        assert persisted is not None
+        assert persisted["status"] == PLANNED
+
+    restarted = ResponderManager(config, db)
+    assert restarted.persistence_health["degraded"] is True
 
 
 def test_timed_firewall_action_expires_after_restart(config, db):

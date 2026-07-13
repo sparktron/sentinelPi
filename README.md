@@ -45,6 +45,8 @@ Phase 0 is complete: port-scan detection is active in the service and device-inv
 flow through the normal persistence and notification pipeline.
 Phase 1 is also complete: learned readiness, response approvals/history, timed firewall rollback,
 and threat-feed health now survive or reconcile across service restarts.
+Phase 3 resilience work is in progress: capture/correlation/database state is bounded and isolated,
+and alerts or active responses now fail closed when their audit records cannot be persisted.
 
 ## ✨ Highlights
 

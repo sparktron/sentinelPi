@@ -26,11 +26,12 @@ from datetime import datetime, timedelta
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 from .base import (
-    BaseResponder, ResponderAction, PLANNED, PENDING, EXECUTED, FAILED, REJECTED,
+    BaseResponder, ResponderAction, PLANNED, PENDING, EXECUTING, EXECUTED, FAILED, REJECTED,
     EXPIRING, EXPIRED, EXPIRATION_FAILED,
 )
 from ..models import Alert
 from ..utils import clock
+from ..utils.persistence_health import DurablePersistenceHealth
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,9 @@ class ResponderManager:
         # Optional callback fired when an action is queued for approval, so an
         # actionable notifier (e.g. ntfy) can push Approve/Reject buttons.
         self._pending_notifier: Optional[Callable[[ResponderAction], None]] = None
+        self._persistence_health = DurablePersistenceHealth(
+            db, "health.persistence.responses"
+        )
         self._load_actions()
 
     def add_responder(self, responder: BaseResponder) -> None:
@@ -111,13 +115,21 @@ class ResponderManager:
             ),
         )
 
-    def _persist(self, action: ResponderAction) -> None:
+    @property
+    def persistence_health(self) -> dict:
+        return self._persistence_health.status
+
+    def _persist(self, action: ResponderAction) -> bool:
         if self._db is None:
-            return
+            return True
         try:
             self._db.save_response_action(action)
         except Exception as exc:
-            logger.error("Failed to persist responder action %s: %s", action.action_id, exc)
+            self._persistence_health.mark_failed(exc)
+            logger.critical("Failed to persist responder action %s: %s", action.action_id, exc)
+            return False
+        self._persistence_health.mark_succeeded()
+        return True
 
     def set_pending_notifier(self, callback: Callable[[ResponderAction], None]) -> None:
         """Register a callback invoked with each action newly queued for approval."""
@@ -148,13 +160,24 @@ class ResponderManager:
                 # Establish a durable plan before approval or execution. If the
                 # process dies during a command, operators still have an audit row.
                 action.status = PLANNED
-                self._persist(action)
+                if not self._persist(action):
+                    action.status = FAILED
+                    action.error = "Response refused because its audit plan could not be persisted"
+                    actions.append(action)
+                    continue
 
                 if dry_run:
                     logger.warning("[DRY-RUN] %s would act on %s: %s",
                                    responder.name, action.target, action.description)
                 elif self._needs_approval(alert):
                     action.status = PENDING
+                    if not self._persist(action):
+                        action.status = FAILED
+                        action.error = (
+                            "Response refused because its pending approval could not be persisted"
+                        )
+                        actions.append(action)
+                        continue
                     with self._lock:
                         self._pending[action.action_id] = (action, responder)
                     logger.warning("[PENDING APPROVAL] %s on %s (%s): %s",
@@ -169,7 +192,6 @@ class ResponderManager:
                     self._run(action, responder)
 
                 actions.append(action)
-                self._persist(action)
             except Exception as exc:
                 logger.error("Responder %s failed on alert %s: %s", responder.name, alert.alert_id, exc)
 
@@ -185,12 +207,18 @@ class ResponderManager:
         # Categories the operator has explicitly trusted bypass approval.
         return alert.category.value not in rc.auto_execute_categories
 
-    def _run(self, action: ResponderAction, responder: BaseResponder) -> None:
+    def _run(self, action: ResponderAction, responder: BaseResponder) -> bool:
+        action.status = EXECUTING
+        if not self._persist(action):
+            action.status = FAILED
+            action.error = "Response refused because execution intent could not be persisted"
+            return False
         responder.execute(action)
         action.status = EXECUTED if action.success else FAILED
         if action.success and action.duration_seconds > 0:
             action.expires_at = clock.now() + timedelta(seconds=action.duration_seconds)
         self._persist(action)
+        return True
 
     def reconcile_expired(self, now: Optional[datetime] = None) -> int:
         """Roll back due timed actions; safe to call repeatedly and at startup."""
@@ -198,18 +226,20 @@ class ResponderManager:
         with self._lock:
             responders = {responder.name: responder for responder in self._responders}
             due = [
-                action for action in self._recent
+                (action, action.status) for action in self._recent
                 if action.status in {EXECUTED, EXPIRING, EXPIRATION_FAILED}
                 and action.expires_at is not None
                 and action.expires_at <= current
                 and action.responder in responders
             ]
-            for action in due:
+            for action, _ in due:
                 action.status = EXPIRING
 
         expired = 0
-        for action in due:
-            self._persist(action)
+        for action, previous_status in due:
+            if not self._persist(action):
+                action.status = previous_status
+                continue
             responder = responders[action.responder]
             try:
                 success, error = responder.expire(action)
@@ -232,24 +262,32 @@ class ResponderManager:
     def approve(self, action_id: str) -> Optional[ResponderAction]:
         """Execute a pending action. Returns it (updated), or None if unknown."""
         with self._lock:
-            entry = self._pending.pop(action_id, None)
+            entry = self._pending.get(action_id)
         if entry is None:
             return None
         action, responder = entry
         logger.warning("Approved action %s — executing %s on %s.",
                        action_id, responder.name, action.target)
-        self._run(action, responder)
+        if self._run(action, responder):
+            with self._lock:
+                self._pending.pop(action_id, None)
+        else:
+            action.status = PENDING
         return action
 
     def reject(self, action_id: str) -> Optional[ResponderAction]:
         """Discard a pending action without executing it."""
         with self._lock:
-            entry = self._pending.pop(action_id, None)
+            entry = self._pending.get(action_id)
         if entry is None:
             return None
         action, _ = entry
         action.status = REJECTED
-        self._persist(action)
+        if not self._persist(action):
+            action.status = PENDING
+            return action
+        with self._lock:
+            self._pending.pop(action_id, None)
         logger.info("Rejected action %s (%s on %s).", action_id, action.responder, action.target)
         return action
 

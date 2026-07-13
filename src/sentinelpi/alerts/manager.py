@@ -31,6 +31,7 @@ from ..config.manager import Config
 from ..utils.network import is_private_ip, is_valid_ip
 from ..utils.geo import lookup_country, lookup_country_name
 from ..utils.asn import lookup_asn
+from ..utils.persistence_health import DurablePersistenceHealth
 from .notifiers import BaseNotifier
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,10 @@ class AlertManager:
         self._total_processed = 0
         self._total_suppressed = 0
         self._total_fired = 0
+        self._total_persistence_failed = 0
+        self._persistence_health = DurablePersistenceHealth(
+            db, "health.persistence.alerts"
+        )
 
     def add_notifier(self, notifier: BaseNotifier) -> None:
         """Register a notifier to receive alerts."""
@@ -153,8 +158,6 @@ class AlertManager:
             self._recent_dedup[alert.dedup_key] = alert.timestamp
             self._prune_dedup()
 
-            self._total_fired += 1
-
         # Outside lock: DB write and notifier calls (may be slow)
         # 3b. Enrich with GeoIP country + ASN for the external IP (centralized
         #     so every detector's alerts get consistent context). No-op when the
@@ -165,7 +168,17 @@ class AlertManager:
         try:
             self.db.save_alert(alert)
         except Exception as exc:
-            logger.error("Failed to save alert to DB: %s", exc)
+            self._persistence_health.mark_failed(exc)
+            with self._lock:
+                # A failed alert must be retryable rather than suppressed by
+                # the reservation made before the database write.
+                if self._recent_dedup.get(alert.dedup_key) == alert.timestamp:
+                    self._recent_dedup.pop(alert.dedup_key, None)
+                self._total_persistence_failed += 1
+            return False
+        self._persistence_health.mark_succeeded()
+        with self._lock:
+            self._total_fired += 1
 
         # 5. Update device suspicion score, and record a trend point at this
         #    instant so the dashboard can chart the host's suspicion over time.
@@ -357,6 +370,7 @@ class AlertManager:
                 "total_processed": self._total_processed,
                 "total_suppressed": self._total_suppressed,
                 "total_fired": self._total_fired,
+                "total_persistence_failed": self._total_persistence_failed,
                 "suppression_rate": (
                     self._total_suppressed / self._total_processed
                     if self._total_processed > 0 else 0.0
@@ -364,4 +378,8 @@ class AlertManager:
             }
         if self._correlator is not None:
             stats["correlator"] = self._correlator.state_metrics
+        persistence = {"alerts": self._persistence_health.status}
+        if self._responder_manager is not None:
+            persistence["responses"] = self._responder_manager.persistence_health
+        stats["persistence"] = persistence
         return stats
