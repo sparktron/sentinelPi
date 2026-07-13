@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from ..utils import clock
 from typing import Dict, Set, Tuple
 
@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 # Default z-score thresholds for anomaly detection
 Z_THRESHOLD_MEDIUM = 2.5   # 2.5 standard deviations above mean
 Z_THRESHOLD_HIGH   = 4.0   # 4.0 standard deviations above mean
+
+_LEARNING_STARTED_STATE_KEY = "baseline_learning_started_at"
 
 
 class RunningStats:
@@ -125,16 +127,41 @@ class BaselineEngine:
         # Destination baseline: (src_ip, dst_ip, dst_port, proto) → seen count
         self._known_destinations: Set[Tuple[str, str, int, str]] = set()
 
-        # Service start time — used to determine if we're still in learning phase
-        self._start_time: datetime = clock.now()
+        # Baseline learning age is durable. Restarting the daemon must not put a
+        # mature sensor back into a full quiet/learning period.
+        self._start_time = self._load_learning_started_at()
 
         # Load from database on startup
         self._load_from_db()
 
         logger.info(
-            "BaselineEngine initialized. Learning phase: %d hours.",
+            "BaselineEngine initialized. Learning phase: %d hours (started %s).",
             config.monitoring.baseline_learning_hours,
+            self._start_time.isoformat(),
         )
+
+    def _load_learning_started_at(self) -> datetime:
+        """Load or initialize the durable baseline-learning epoch."""
+        raw = self.db.get_app_state(_LEARNING_STARTED_STATE_KEY)
+        if raw is None:
+            # Upgrade compatibility: an existing baseline predates app_state.
+            # Use its oldest observation so a mature install does not relearn.
+            raw = self.db.get_earliest_baseline_timestamp()
+
+        if raw:
+            try:
+                started = datetime.fromisoformat(raw)
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                started = started.astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                logger.warning("Invalid persisted baseline learning timestamp %r; resetting.", raw)
+                started = clock.now()
+        else:
+            started = clock.now()
+
+        self.db.set_app_state(_LEARNING_STARTED_STATE_KEY, started.isoformat())
+        return started
 
     def _load_from_db(self) -> None:
         """Pre-populate in-memory caches from database."""
@@ -168,6 +195,8 @@ class BaselineEngine:
     @property
     def is_learning(self) -> bool:
         """True if we're still in the initial learning phase."""
+        if self.config.monitoring.baseline_learning_hours <= 0:
+            return False
         elapsed_hours = (clock.now() - self._start_time).total_seconds() / 3600
         return elapsed_hours < self.config.monitoring.baseline_learning_hours
 

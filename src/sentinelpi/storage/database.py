@@ -28,7 +28,7 @@ from ..models import Alert, AlertStatus, Device, Severity, AlertCategory
 logger = logging.getLogger(__name__)
 
 # Current schema version — bump when adding migrations
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Thread-local storage for per-thread SQLite connections
 _thread_local = threading.local()
@@ -130,6 +130,8 @@ class Database:
             self._migrate_v7(conn)
         if current_version < 8:
             self._migrate_v8(conn)
+        if current_version < 9:
+            self._migrate_v9(conn)
 
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
@@ -332,6 +334,56 @@ class Database:
                 ON suspicion_history(ip, ts);
         """)
         logger.info("Database migration v8 applied.")
+
+    def _migrate_v9(self, conn: sqlite3.Connection) -> None:
+        """Durable application state, beginning with baseline learning age."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_state (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        logger.info("Database migration v9 applied.")
+
+    # ------------------------------------------------------------------
+    # Durable application state
+    # ------------------------------------------------------------------
+
+    def get_app_state(self, key: str) -> Optional[str]:
+        """Return a persisted application-state value, or None when absent."""
+        conn = self._get_connection()
+        row = conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row else None
+
+    def set_app_state(self, key: str, value: str) -> None:
+        """Atomically create or replace an application-state value."""
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO app_state (key, value, updated_at) VALUES (?,?,?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value = excluded.value,
+                  updated_at = excluded.updated_at
+                """,
+                (key, value, clock.now().isoformat()),
+            )
+
+    def get_earliest_baseline_timestamp(self) -> Optional[str]:
+        """Return the oldest persisted baseline observation timestamp."""
+        conn = self._get_connection()
+        row = conn.execute(
+            """
+            SELECT MIN(ts) AS earliest FROM (
+                SELECT MIN(first_seen) AS ts FROM baseline_destinations
+                UNION ALL
+                SELECT MIN(first_seen) AS ts FROM baseline_dns
+                UNION ALL
+                SELECT MIN(updated_at) AS ts FROM baseline_hourly
+            )
+            """
+        ).fetchone()
+        return str(row["earliest"]) if row and row["earliest"] else None
 
     # ------------------------------------------------------------------
     # Alert CRUD

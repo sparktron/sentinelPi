@@ -11,7 +11,7 @@ H4: update_hourly_baseline used a biased EWMA recurrence (mislabeled "Welford")
 from __future__ import annotations
 
 import statistics
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sentinelpi.baseline.engine import BaselineEngine, RunningStats
 from sentinelpi.utils import clock
@@ -92,3 +92,33 @@ def test_hourly_connection_baseline_rehydrates_after_restart(config, db):
 
     assert is_spike
     assert z_score > 0
+
+
+def test_learning_period_does_not_restart_with_daemon(config, db):
+    config.monitoring.baseline_learning_hours = 24
+    first_start = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+
+    with clock.use_clock(clock.FixedClock(first_start)):
+        first = BaselineEngine(config, db)
+        assert first.is_learning
+
+    after_learning = first_start + timedelta(hours=25)
+    with clock.use_clock(clock.FixedClock(after_learning)):
+        restarted = BaselineEngine(config, db)
+        assert not restarted.is_learning
+        assert restarted._start_time == first_start
+
+
+def test_existing_baseline_seeds_learning_epoch_on_upgrade(config, db):
+    config.monitoring.baseline_learning_hours = 24
+    first_seen = datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc)
+    now = first_seen + timedelta(days=7)
+
+    with clock.use_clock(clock.FixedClock(first_seen)):
+        db.record_dns_domain("existing.example")
+
+    with clock.use_clock(clock.FixedClock(now)):
+        baseline = BaselineEngine(config, db)
+
+    assert not baseline.is_learning
+    assert baseline._start_time == first_seen
