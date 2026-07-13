@@ -558,13 +558,21 @@ class SentinelPi:
             logger.info("Threat-intel refresh thread started.")
             while not self._stop_event.is_set():
                 try:
-                    self._intel_service.refresh()
+                    success = self._intel_service.refresh()
+                    feed_status = self._intel_service.refresh_status
+                    error = self._intel_service.refresh_error_summary
                     if self._watchdog is not None:
-                        self._watchdog.record_threat_intel_refresh(success=True)
-                    logger.info(
-                        "Threat intel active: %d indicators loaded.",
-                        self._intel_service.indicator_count,
-                    )
+                        self._watchdog.record_threat_intel_refresh(
+                            success=success, error=error, feeds=feed_status
+                        )
+                    if success:
+                        logger.info(
+                            "Threat intel active: %d indicators loaded%s.",
+                            self._intel_service.indicator_count,
+                            f"; partial failures: {error}" if error else "",
+                        )
+                    else:
+                        logger.error("Threat-intel refresh failed for every feed: %s", error)
                 except Exception as exc:
                     logger.error("Threat-intel refresh failed: %s", exc)
                     if self._watchdog is not None:

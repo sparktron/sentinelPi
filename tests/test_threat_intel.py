@@ -109,6 +109,8 @@ def test_refresh_uses_injected_fetcher_and_caches(tmp_path):
     assert svc.match_ip("45.9.148.99") is not None
     # Cache file was written for reuse on next startup.
     assert (tmp_path / "feodo.txt").exists()
+    assert svc.refresh_status["feodo"]["last_attempt_success"] is True
+    assert svc.refresh_status["feodo"]["last_success_at"] is not None
 
 
 def test_refresh_failure_keeps_previous_cache(tmp_path):
@@ -122,6 +124,25 @@ def test_refresh_failure_keeps_previous_cache(tmp_path):
     assert svc.refresh() is False
     # Fell back to the existing cache rather than wiping it.
     assert svc.match_ip("45.9.148.99") is not None
+    assert svc.refresh_status["feodo"]["last_attempt_success"] is False
+    assert "network down" in svc.refresh_status["feodo"]["error"]
+
+
+def test_partial_refresh_exposes_per_feed_failure(tmp_path):
+    cfg = ThreatIntelConfig(
+        enabled=True, cache_dir=str(tmp_path), feeds=["feodo", "urlhaus"]
+    )
+
+    def partial_fetch(url, timeout):
+        if "feodotracker" in url:
+            return "45.9.148.99\n"
+        raise ConnectionError("urlhaus unavailable")
+
+    svc = ThreatIntelService(cfg, fetcher=partial_fetch)
+    assert svc.refresh() is True
+    assert svc.refresh_status["feodo"]["last_attempt_success"] is True
+    assert svc.refresh_status["urlhaus"]["last_attempt_success"] is False
+    assert "urlhaus unavailable" in svc.refresh_error_summary
 
 
 # ------------------------------------------------------------------- detector

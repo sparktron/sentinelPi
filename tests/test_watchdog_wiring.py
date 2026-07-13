@@ -18,8 +18,8 @@ class _Watchdog:
     def record_event(self):
         self.events += 1
 
-    def record_threat_intel_refresh(self, *, success, error=""):
-        self.refreshes.append((success, error))
+    def record_threat_intel_refresh(self, *, success, error="", feeds=None):
+        self.refreshes.append((success, error, feeds or {}))
 
 
 class _Detector:
@@ -62,6 +62,8 @@ def test_threat_intel_refresh_records_success_and_failure():
 
     class _Intel:
         indicator_count = 0
+        refresh_status = {"feodo": {"last_attempt_success": True}}
+        refresh_error_summary = ""
 
         def __init__(self):
             self.calls = 0
@@ -69,12 +71,15 @@ def test_threat_intel_refresh_records_success_and_failure():
         def refresh(self):
             self.calls += 1
             app._stop_event.set()
+            return True
 
     app._intel_service = _Intel()
     app._start_threat_intel()
     app._threads[0].join(timeout=2)
 
-    assert app._watchdog.refreshes == [(True, "")]
+    assert app._watchdog.refreshes == [
+        (True, "", {"feodo": {"last_attempt_success": True}})
+    ]
 
     app._stop_event = threading.Event()
     app._threads = []
@@ -90,7 +95,34 @@ def test_threat_intel_refresh_records_success_and_failure():
     app._start_threat_intel()
     app._threads[0].join(timeout=2)
 
-    assert app._watchdog.refreshes[-1] == (False, "feed down")
+    assert app._watchdog.refreshes[-1] == (False, "feed down", {})
+
+
+def test_threat_intel_false_result_records_failure_without_exception():
+    app = SentinelPi.__new__(SentinelPi)
+    app.config = type("Cfg", (), {
+        "threat_intel": type("TI", (), {"refresh_interval_hours": 1})()
+    })()
+    app._stop_event = threading.Event()
+    app._threads = []
+    app._watchdog = _Watchdog()
+
+    class _Intel:
+        indicator_count = 3
+        refresh_status = {"feodo": {"last_attempt_success": False, "error": "timeout"}}
+        refresh_error_summary = "feodo: timeout"
+
+        def refresh(self):
+            app._stop_event.set()
+            return False
+
+    app._intel_service = _Intel()
+    app._start_threat_intel()
+    app._threads[0].join(timeout=2)
+
+    assert app._watchdog.refreshes == [
+        (False, "feodo: timeout", _Intel.refresh_status)
+    ]
 
 
 def _wait_for(predicate):
