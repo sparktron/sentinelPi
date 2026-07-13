@@ -43,6 +43,8 @@ prioritized implementation backlog tracked in
 [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).
 Phase 0 is complete: port-scan detection is active in the service and device-inventory alerts now
 flow through the normal persistence and notification pipeline.
+Phase 1 is also complete: learned readiness, response approvals/history, timed firewall rollback,
+and threat-feed health now survive or reconcile across service restarts.
 
 ## ✨ Highlights
 

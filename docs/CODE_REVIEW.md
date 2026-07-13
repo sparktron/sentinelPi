@@ -18,6 +18,11 @@ in the real service even though their isolated unit tests passed:
 and polling inputs, and all inventory polling runs through the standard alert-dispatch wrapper.
 Three service-wiring regressions were added; the full suite now contains 408 tests.
 
+**Phase 1 status (2026-07-12): resolved.** Baseline learning age and dirty checkpoints now survive
+restarts; response plans/results/approvals/expirations have a durable ledger; timed iptables and
+nftables blocks reconcile after restart; and watchdog status reports overall and per-feed
+threat-intelligence refresh health. The full suite now contains 418 tests.
+
 The next most important work is to make learning state restart-safe, make response duration and
 audit behavior match configuration, report threat-intelligence refresh failure accurately, and
 remove or implement configuration switches that currently have no runtime effect.
@@ -59,7 +64,7 @@ The unused pending buffer was removed, and a regression proves tracker alerts re
 
 ### High
 
-#### H1. Every restart re-enters the full baseline learning period
+#### H1. Every restart re-entered the full baseline learning period — Resolved
 
 **Issue:** hourly statistics, destinations, and domains are rehydrated, but the learning clock is
 always reset to process start. With the default 24-hour period, every service restart suppresses
@@ -69,11 +74,10 @@ signals for another day. Frequent updates or crashes can keep a sensor permanent
 **Evidence:** `src/sentinelpi/baseline/engine.py:128-172` and calls to `baseline.is_learning` across
 the connection, DNS, geo-country, active-hours, lateral-movement, and host-profile detectors.
 
-**Required fix:** persist a baseline epoch/learning-complete marker and rehydrate it. Determine
-learning readiness from persisted observation age and sample sufficiency rather than daemon uptime.
-Add a restart test with a nonzero learning period proving a mature baseline stays active.
+**Implemented change:** schema v9 persists the learning epoch in `app_state`; upgrades seed it from
+the oldest existing baseline observation. Restart tests prove mature baselines remain active.
 
-#### H2. Firewall block duration is accepted but ignored
+#### H2. Firewall block duration was accepted but ignored — Resolved
 
 **Issue:** `response.block_duration_seconds` is documented and validated, but firewall execution
 only inserts permanent rules. No timer, expiry metadata, delete command, or startup reconciliation
@@ -83,11 +87,11 @@ the firewall is rebuilt.
 **Evidence:** `src/sentinelpi/config/manager.py:316-322` and
 `src/sentinelpi/responders/firewall.py:73-117`.
 
-**Required fix:** either remove the duration option and clearly document permanent behavior, or
-implement durable expiry. Prefer responder-action persistence plus idempotent unblock commands
-reconciled at startup; test both iptables and nftables expiration paths.
+**Implemented change:** successful firewall actions receive execution-relative expirations in the
+durable action ledger. Reconciliation runs at startup and during maintenance; iptables deletes are
+idempotent and nftables rules use persisted action markers to resolve handles after restart.
 
-#### H3. Threat-intelligence refresh failures are recorded as successes
+#### H3. Threat-intelligence refresh failures were recorded as successes — Resolved
 
 **Issue:** `ThreatIntelService.refresh()` returns `False` when every fetch/cache write fails. The
 refresh loop ignores that result and always records watchdog success unless an exception escapes.
@@ -96,9 +100,8 @@ The service can use stale or empty feeds indefinitely while `/api/status` report
 **Evidence:** `src/sentinelpi/intel/threat_feeds.py:231-256` and
 `src/sentinelpi/main.py:549-570`.
 
-**Required fix:** capture the boolean result and call `record_threat_intel_refresh(success=result)`.
-Include per-feed freshness/error state so partial success is visible. Add tests for total failure,
-partial success, stale-cache reuse, and recovery.
+**Implemented change:** the refresh loop now honors the service result and sends per-feed attempt,
+success, error, age, and staleness state to the watchdog. Total and partial failures are covered.
 
 #### H4. Several public configuration switches have no runtime effect
 
@@ -240,7 +243,7 @@ the host without a durable alert record, weakening the audit trail and making re
 source alert or planned action cannot be persisted, emit a high-priority health signal through an
 independent path, and make the return/result distinguish persisted, dispatched, and failed states.
 
-#### M7. Response approvals and action history disappear on restart
+#### M7. Response approvals and action history disappeared on restart — Resolved
 
 **Issue:** pending and recent response actions are in-memory collections only. A restart loses
 pending approvals and the dashboard audit history, while already-applied firewall/sinkhole effects
@@ -249,8 +252,9 @@ may remain. This also blocks safe implementation of timed rollback.
 **Evidence:** `src/sentinelpi/responders/manager.py:36-46` and
 `src/sentinelpi/responders/manager.py:80-150`.
 
-**Required fix:** persist action plans, status transitions, command results, approver/time, and
-expiry. Rehydrate pending actions safely and reconcile executed actions with actual system state.
+**Implemented change:** schema v10/v11 stores response plans, commands, rollback commands, status,
+results, duration, and expiration timestamps. Pending actions bind to configured responders after
+restart, and executed/rejected/expired states remain available in recent history.
 
 #### M8. The dashboard “trust device” action does not reduce detector noise
 
@@ -266,7 +270,7 @@ mutates the object returned by `get_device()` outside the tracker's lock.
 suppresses, and make detectors consult a live policy source. Record trust changes with actor/time and
 offer an untrust action.
 
-#### M9. Baseline snapshots can lose the last nine samples at shutdown
+#### M9. Baseline snapshots could lose the last nine samples at shutdown — Resolved
 
 **Issue:** connection statistics persist only on every tenth update, and shutdown has no baseline
 flush. A crash or clean stop between checkpoints loses recent state; lightly observed hour/day
@@ -274,8 +278,9 @@ buckets may never persist at all.
 
 **Evidence:** `src/sentinelpi/baseline/engine.py:178-199` and `SentinelPi._shutdown()`.
 
-**Required fix:** add an explicit `BaselineEngine.flush()` called during graceful shutdown, and/or
-checkpoint based on elapsed time plus dirty state. Keep writes batched to protect SD-card life.
+**Implemented change:** connection baseline buckets are marked dirty, periodic ten-sample
+checkpoints clear matching snapshots safely, and graceful shutdown flushes all remaining dirty rows
+after worker threads stop and before SQLite closes.
 
 ### Low
 
@@ -328,7 +333,7 @@ These additions follow directly from the defects and current architecture, in pr
 ## Suggested Fix Order
 
 1. ~~C1 and C2 with service-level regression tests.~~ Completed 2026-07-12.
-2. H1, H2, and H3 for detection/response correctness across restarts.
+2. ~~H1, H2, and H3 for detection/response correctness across restarts.~~ Completed 2026-07-12.
 3. H4 and M1 so configuration and documentation tell the truth.
 4. H5, H6, M6, and M7 for privilege boundaries and response audit safety.
 5. Remaining medium/low findings and feature work.
@@ -337,11 +342,12 @@ These additions follow directly from the defects and current architecture, in pr
 
 - Initial review: `python -m pytest -q` — **405 passed** on Python 3.10.12.
 - Phase 0 implementation: `python -m pytest -q` — **408 passed** on Python 3.10.12.
+- Phase 1 implementation: `python -m pytest -q` — **418 passed** on Python 3.10.12.
 - `ruff check src tests` — passed.
 - `mypy` — passed for the configured `src/` scope (58 source files).
 - `python -m compileall -q src tests` — passed.
 - Manual static trace of all production modules, service startup/shutdown wiring, public config
   fields, deployment manifests, responders, dashboard APIs, persistence, and tests.
 
-No application behavior was changed as part of this review. Documentation changes only record the
-findings and prioritize follow-up work.
+The initial review changed documentation only. Phase 0 and Phase 1 implementation status and
+validation were appended as the corrective work landed on 2026-07-12.

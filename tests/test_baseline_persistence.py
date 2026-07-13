@@ -122,3 +122,22 @@ def test_existing_baseline_seeds_learning_epoch_on_upgrade(config, db):
 
     assert not baseline.is_learning
     assert baseline._start_time == first_seen
+
+
+def test_flush_persists_partial_checkpoint(config, db):
+    instant = datetime(2026, 7, 12, 14, 0, tzinfo=timezone.utc)
+    with clock.use_clock(clock.FixedClock(instant)):
+        baseline = BaselineEngine(config, db)
+        for value in (5, 7, 6):
+            baseline.record_connection_count("192.168.1.50", value)
+
+        assert db.get_hourly_baseline(
+            "192.168.1.50", instant.hour, instant.weekday()
+        ) is None
+        assert baseline.flush() == 1
+
+    row = db.get_hourly_baseline("192.168.1.50", instant.hour, instant.weekday())
+    assert row is not None
+    assert row["sample_count"] == 3
+    assert row["avg_conn"] == 6.0
+    assert baseline.flush() == 0

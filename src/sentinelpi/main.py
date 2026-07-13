@@ -763,6 +763,12 @@ class SentinelPi:
             if t.is_alive():
                 logger.warning("Thread %s did not stop cleanly.", t.name)
 
+        logger.info("Flushing baseline state...")
+        try:
+            self._baseline.flush()
+        except Exception as exc:
+            logger.error("Baseline flush failed during shutdown: %s", exc, exc_info=True)
+
         logger.info("Closing notifiers...")
         self._alert_manager.close_notifiers()
 

@@ -113,6 +113,7 @@ class BaselineEngine:
 
         # In-memory stats: (ip, hour_of_day, day_of_week) → RunningStats
         self._conn_stats: Dict[Tuple[str, int, int], RunningStats] = {}
+        self._dirty_conn_stats: Set[Tuple[str, int, int]] = set()
 
         # Traffic bytes per minute per interface: iface → RunningStats
         self._traffic_stats: Dict[str, RunningStats] = {}
@@ -219,13 +220,43 @@ class BaselineEngine:
             if key not in self._conn_stats:
                 self._conn_stats[key] = RunningStats()
             self._conn_stats[key].update(float(count))
+            self._dirty_conn_stats.add(key)
+            stats = self._conn_stats[key]
+            checkpoint = (
+                (stats.mean, stats.stddev, stats.n) if stats.n % 10 == 0 else None
+            )
 
         # Persist a snapshot of the authoritative in-memory stats periodically
         # (every 10 updates). The DB row mirrors RunningStats — it is not a
         # second, independently-derived estimate.
-        stats = self._conn_stats.get(key)
-        if stats and stats.n % 10 == 0:
-            self.db.update_hourly_baseline(ip, hour, dow, stats.mean, stats.stddev, stats.n)
+        if checkpoint is not None:
+            mean, stddev, sample_count = checkpoint
+            self.db.update_hourly_baseline(ip, hour, dow, mean, stddev, sample_count)
+            with self._lock:
+                current = self._conn_stats.get(key)
+                if current is not None and current.n == sample_count:
+                    self._dirty_conn_stats.discard(key)
+
+    def flush(self) -> int:
+        """Persist every dirty connection baseline snapshot; return rows written."""
+        with self._lock:
+            snapshots = [
+                (key, stats.mean, stats.stddev, stats.n)
+                for key in self._dirty_conn_stats
+                if (stats := self._conn_stats.get(key)) is not None
+            ]
+
+        written = 0
+        for (ip, hour, dow), mean, stddev, sample_count in snapshots:
+            self.db.update_hourly_baseline(ip, hour, dow, mean, stddev, sample_count)
+            written += 1
+            with self._lock:
+                current = self._conn_stats.get((ip, hour, dow))
+                if current is not None and current.n == sample_count:
+                    self._dirty_conn_stats.discard((ip, hour, dow))
+        if written:
+            logger.info("Flushed %d dirty baseline snapshot(s).", written)
+        return written
 
     def check_connection_spike(self, ip: str, current_count: int) -> Tuple[bool, float]:
         """

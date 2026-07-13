@@ -5,10 +5,10 @@ _Created: 2026-06-10. Scope: full repository review of `src/`, `tests/`, `config
 
 ## Review Summary
 
-SentinelPi has a solid structure and a broad regression suite: 408 tests pass after the 2026-07-12
-Phase 0 fixes. Port-scan and device-inventory alert wiring is restored. The highest-value work now
-is making learning/response state restart-safe and ensuring every public configuration switch has
-a tested runtime effect.
+SentinelPi has a solid structure and a broad regression suite: 418 tests pass after the 2026-07-12
+Phase 0 and Phase 1 fixes. Runtime detector wiring and restart-safe learning/response state are now
+in place. The highest-value work is Phase 2: ensuring every public configuration switch has a
+tested runtime effect and tightening deployment/configuration safety.
 
 Severity legend: Critical means detection or shutdown correctness can be wrong in normal use.
 High means likely operator confusion, noisy detection, or degraded reliability. Medium means
@@ -19,8 +19,10 @@ important hardening or usability work.
 The current review is documented in full in [`CODE_REVIEW.md`](CODE_REVIEW.md). Validation was
 green (405 tests, Ruff, mypy, and compileall), but service-level tracing found runtime gaps not
 covered by isolated component tests. Phase 0 was completed the same day and raised the suite to
-408 tests. This backlog supersedes the older completed phases for new work; historical items below
-remain as implementation history.
+408 tests. Phase 1 then completed restart-safe learning, response persistence/expiration,
+threat-feed health, and final baseline flushing, raising the suite to 418 tests. This backlog
+supersedes the older completed phases for new work; historical items below remain as implementation
+history.
 
 ### Phase 0: Restore Advertised Detection (Critical)
 
@@ -35,16 +37,16 @@ inventory/dispatch wiring.
 
 ### Phase 1: Restart And Response Correctness (High)
 
-- [ ] Persist learning completion/readiness so a restart does not trigger another full quiet period.
-- [ ] Implement `response.block_duration_seconds` with durable expiry and idempotent unblock, or
-  remove the unsupported option and document permanent blocks.
-- [ ] Persist responder plans, approvals, executions, results, and expirations; reconcile system
+- [x] Persist learning completion/readiness so a restart does not trigger another full quiet period.
+- [x] Implement `response.block_duration_seconds` with durable expiry and idempotent unblock.
+- [x] Persist responder plans, approvals, executions, results, and expirations; reconcile system
   state after restart.
-- [ ] Treat an all-feed threat-intel refresh failure as watchdog failure and expose per-feed age.
-- [ ] Flush dirty baseline statistics during graceful shutdown.
+- [x] Treat an all-feed threat-intel refresh failure as watchdog failure and expose per-feed age.
+- [x] Flush dirty baseline statistics during graceful shutdown.
 
-Exit criteria: mature baselines stay active across restart, timed blocks expire after restart, and
-response actions always have a durable audit record.
+Status: completed 2026-07-12. Mature baselines stay active across restart, partial checkpoints flush
+on shutdown, timed iptables/nftables blocks expire and reconcile after restart, response actions
+have a durable audit record, and threat-feed health is visible per feed.
 
 ### Phase 2: Configuration Truthfulness And Deployment Safety (High)
 
