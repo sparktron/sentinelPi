@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from sentinelpi.models import Alert, AlertCategory, Severity
-from sentinelpi.responders.base import EXECUTED, PENDING, REJECTED
+from sentinelpi.responders.base import EXECUTED, EXPIRED, PENDING, REJECTED
 from sentinelpi.responders.firewall import FirewallResponder
 from sentinelpi.responders.manager import ResponderManager
 
@@ -74,3 +74,65 @@ def test_rejection_is_persisted(config, db):
     persisted = {item.action_id: item for item in restarted.recent_actions()}
     assert persisted[action.action_id].status == REJECTED
     assert restarted.pending_actions() == []
+
+
+def test_timed_firewall_action_expires_after_restart(config, db):
+    from datetime import datetime, timedelta, timezone
+    from sentinelpi.utils import clock
+
+    _arm(config)
+    config.response.require_approval = False
+    config.response.block_duration_seconds = 60
+    started = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+
+    first_runner = _RecordingRunner()
+    with clock.use_clock(clock.FixedClock(started)):
+        first = ResponderManager(config, db)
+        first.add_responder(FirewallResponder(config, runner=first_runner))
+        action = first.handle(_alert())[0]
+
+    assert action.status == EXECUTED
+    assert action.expires_at == started + timedelta(seconds=60)
+
+    restart_runner = _RecordingRunner()
+    with clock.use_clock(clock.FixedClock(started + timedelta(seconds=61))):
+        restarted = ResponderManager(config, db)
+        restarted.add_responder(FirewallResponder(config, runner=restart_runner))
+
+    persisted = {item.action_id: item for item in restarted.recent_actions()}
+    assert persisted[action.action_id].status == EXPIRED
+    assert any(argv[1] == "-D" for argv in restart_runner.calls)
+
+
+def test_nftables_expiry_uses_persisted_rule_markers(config, db):
+    from datetime import datetime, timedelta, timezone
+    from sentinelpi.utils import clock
+
+    class _NftRunner(_RecordingRunner):
+        def __call__(self, argv):
+            self.calls.append(argv)
+            if argv[:4] == ["nft", "-a", "list", "chain"]:
+                chain = argv[-1]
+                return 0, f'ip daddr 45.9.148.99 drop comment "sentinelpi:{action.action_id}:{chain}" # handle 42'
+            return 0, ""
+
+    _arm(config)
+    config.response.require_approval = False
+    config.response.firewall_backend = "nftables"
+    config.response.block_duration_seconds = 30
+    started = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
+
+    initial_runner = _RecordingRunner()
+    with clock.use_clock(clock.FixedClock(started)):
+        first = ResponderManager(config, db)
+        first.add_responder(FirewallResponder(config, runner=initial_runner))
+        action = first.handle(_alert())[0]
+
+    nft_runner = _NftRunner()
+    with clock.use_clock(clock.FixedClock(started + timedelta(seconds=31))):
+        restarted = ResponderManager(config, db)
+        restarted.add_responder(FirewallResponder(config, runner=nft_runner))
+
+    assert any(argv[:3] == ["nft", "delete", "rule"] for argv in nft_runner.calls)
+    persisted = {item.action_id: item for item in restarted.recent_actions()}
+    assert persisted[action.action_id].status == EXPIRED

@@ -17,6 +17,7 @@ Safety rails baked in:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Callable, List, Optional, Tuple
 
 from .base import BaseResponder, ResponderAction
@@ -74,25 +75,37 @@ class FirewallResponder(BaseResponder):
         ip = self._blockable_ip(alert)
         if ip is None:
             return None
-        commands = self._build_commands(ip)
-        return ResponderAction(
+        action = ResponderAction(
             responder=self.name,
             target=ip,
             description=f"Block {ip} ({self.config.response.firewall_backend}) — outbound and inbound DROP",
-            commands=commands,
+            duration_seconds=self.config.response.block_duration_seconds,
         )
+        action.commands = self._build_commands(ip, action.action_id)
+        action.rollback_commands = self._build_rollback_commands(ip)
+        return action
 
-    def _build_commands(self, ip: str) -> List[List[str]]:
+    def _build_commands(self, ip: str, action_id: str = "") -> List[List[str]]:
         backend = self.config.response.firewall_backend
         if backend == "nftables":
             return [
-                ["nft", "add", "rule", "inet", "filter", "output", "ip", "daddr", ip, "drop"],
-                ["nft", "add", "rule", "inet", "filter", "input", "ip", "saddr", ip, "drop"],
+                ["nft", "add", "rule", "inet", "filter", "output", "ip", "daddr", ip,
+                 "drop", "comment", f"sentinelpi:{action_id}:output"],
+                ["nft", "add", "rule", "inet", "filter", "input", "ip", "saddr", ip,
+                 "drop", "comment", f"sentinelpi:{action_id}:input"],
             ]
         # default: iptables. -I inserts at the top so the DROP wins.
         return [
             ["iptables", "-I", "OUTPUT", "-d", ip, "-j", "DROP"],
             ["iptables", "-I", "INPUT", "-s", ip, "-j", "DROP"],
+        ]
+
+    def _build_rollback_commands(self, ip: str) -> List[List[str]]:
+        if self.config.response.firewall_backend == "nftables":
+            return []  # nftables rollback resolves rule handles dynamically.
+        return [
+            ["iptables", "-D", "OUTPUT", "-d", ip, "-j", "DROP"],
+            ["iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"],
         ]
 
     # ----------------------------------------------------------------- execute
@@ -115,3 +128,46 @@ class FirewallResponder(BaseResponder):
         action.executed = True
         action.success = True
         logger.warning("Quarantined %s via %s.", action.target, self.config.response.firewall_backend)
+
+    def expire(self, action: ResponderAction) -> Tuple[bool, str]:
+        """Remove this action's firewall rules, treating already-absent rules as success."""
+        if self.config.response.firewall_backend == "nftables":
+            return self._expire_nftables(action)
+
+        for delete_argv in action.rollback_commands:
+            check_argv = list(delete_argv)
+            check_argv[1] = "-C"
+            try:
+                check_code, _ = self._runner(check_argv)
+                if check_code != 0:
+                    continue  # already absent: idempotent reconciliation
+                code, output = self._runner(delete_argv)
+            except Exception as exc:
+                return False, f"{' '.join(delete_argv)}: {exc}"
+            if code != 0:
+                return False, f"{' '.join(delete_argv)} -> exit {code}: {output}"
+        return True, ""
+
+    def _expire_nftables(self, action: ResponderAction) -> Tuple[bool, str]:
+        for chain in ("output", "input"):
+            marker = f"sentinelpi:{action.action_id}:{chain}"
+            list_argv = ["nft", "-a", "list", "chain", "inet", "filter", chain]
+            try:
+                code, output = self._runner(list_argv)
+            except Exception as exc:
+                return False, f"{' '.join(list_argv)}: {exc}"
+            if code != 0:
+                return False, f"{' '.join(list_argv)} -> exit {code}: {output}"
+            matching = next((line for line in output.splitlines() if marker in line), "")
+            if not matching:
+                continue  # already absent
+            handle = re.search(r"# handle (\d+)", matching)
+            if handle is None:
+                return False, f"could not find nftables handle for {marker}"
+            delete_argv = [
+                "nft", "delete", "rule", "inet", "filter", chain, "handle", handle.group(1)
+            ]
+            code, delete_output = self._runner(delete_argv)
+            if code != 0:
+                return False, f"{' '.join(delete_argv)} -> exit {code}: {delete_output}"
+        return True, ""

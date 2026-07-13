@@ -28,7 +28,7 @@ from ..models import Alert, AlertStatus, Device, Severity, AlertCategory
 logger = logging.getLogger(__name__)
 
 # Current schema version — bump when adding migrations
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Thread-local storage for per-thread SQLite connections
 _thread_local = threading.local()
@@ -134,6 +134,8 @@ class Database:
             self._migrate_v9(conn)
         if current_version < 10:
             self._migrate_v10(conn)
+        if current_version < 11:
+            self._migrate_v11(conn)
 
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
@@ -375,6 +377,19 @@ class Database:
         """)
         logger.info("Database migration v10 applied.")
 
+    def _migrate_v11(self, conn: sqlite3.Connection) -> None:
+        """Timed-response rollback and expiration state."""
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(response_actions)")}
+        additions = {
+            "rollback_commands": "TEXT NOT NULL DEFAULT '[]'",
+            "duration_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "expired_at": "TEXT",
+        }
+        for name, definition in additions.items():
+            if name not in cols:
+                conn.execute(f"ALTER TABLE response_actions ADD COLUMN {name} {definition}")
+        logger.info("Database migration v11 applied.")
+
     # ------------------------------------------------------------------
     # Durable application state
     # ------------------------------------------------------------------
@@ -427,8 +442,8 @@ class Database:
                 INSERT INTO response_actions
                   (action_id, alert_id, responder, target, description, commands,
                    created_at, updated_at, status, dry_run, executed, success,
-                   error, expires_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   error, expires_at, rollback_commands, duration_seconds, expired_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(action_id) DO UPDATE SET
                   alert_id = excluded.alert_id,
                   responder = excluded.responder,
@@ -441,7 +456,10 @@ class Database:
                   executed = excluded.executed,
                   success = excluded.success,
                   error = excluded.error,
-                  expires_at = excluded.expires_at
+                  expires_at = excluded.expires_at,
+                  rollback_commands = excluded.rollback_commands,
+                  duration_seconds = excluded.duration_seconds,
+                  expired_at = excluded.expired_at
                 """,
                 (
                     action.action_id,
@@ -458,6 +476,9 @@ class Database:
                     int(action.success),
                     action.error,
                     expires_at.isoformat() if expires_at is not None else None,
+                    json.dumps(action.rollback_commands),
+                    int(action.duration_seconds),
+                    action.expired_at.isoformat() if action.expired_at is not None else None,
                 ),
             )
 

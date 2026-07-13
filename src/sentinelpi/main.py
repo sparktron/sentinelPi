@@ -624,6 +624,12 @@ class SentinelPi:
         while not self._stop_event.is_set():
             now = time.time()
 
+            if self._responder_manager is not None:
+                try:
+                    self._responder_manager.reconcile_expired()
+                except Exception as exc:
+                    logger.error("Response expiry reconciliation failed: %s", exc, exc_info=True)
+
             if (
                 self.config.monitoring.self_monitoring_enabled
                 and self._watchdog is not None

@@ -22,11 +22,15 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
-from .base import BaseResponder, ResponderAction, PLANNED, PENDING, EXECUTED, FAILED, REJECTED
+from .base import (
+    BaseResponder, ResponderAction, PLANNED, PENDING, EXECUTED, FAILED, REJECTED,
+    EXPIRING, EXPIRED, EXPIRATION_FAILED,
+)
 from ..models import Alert
+from ..utils import clock
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +63,7 @@ class ResponderManager:
                     self._pending[action_id] = (action, responder)
                     del self._unbound_pending[action_id]
         logger.debug("Registered responder: %s", responder.name)
+        self.reconcile_expired()
 
     def _load_actions(self) -> None:
         """Rehydrate recent history and pending approvals from the database."""
@@ -96,6 +101,14 @@ class ResponderManager:
             success=bool(row["success"]),
             error=str(row["error"] or ""),
             alert_id=str(row["alert_id"] or ""),
+            rollback_commands=json.loads(row.get("rollback_commands") or "[]"),
+            duration_seconds=int(row.get("duration_seconds") or 0),
+            expires_at=(
+                datetime.fromisoformat(row["expires_at"]) if row.get("expires_at") else None
+            ),
+            expired_at=(
+                datetime.fromisoformat(row["expired_at"]) if row.get("expired_at") else None
+            ),
         )
 
     def _persist(self, action: ResponderAction) -> None:
@@ -132,9 +145,12 @@ class ResponderManager:
                     continue
                 action.dry_run = dry_run
                 action.alert_id = alert.alert_id
+                # Establish a durable plan before approval or execution. If the
+                # process dies during a command, operators still have an audit row.
+                action.status = PLANNED
+                self._persist(action)
 
                 if dry_run:
-                    action.status = PLANNED
                     logger.warning("[DRY-RUN] %s would act on %s: %s",
                                    responder.name, action.target, action.description)
                 elif self._needs_approval(alert):
@@ -172,7 +188,45 @@ class ResponderManager:
     def _run(self, action: ResponderAction, responder: BaseResponder) -> None:
         responder.execute(action)
         action.status = EXECUTED if action.success else FAILED
+        if action.success and action.duration_seconds > 0:
+            action.expires_at = clock.now() + timedelta(seconds=action.duration_seconds)
         self._persist(action)
+
+    def reconcile_expired(self, now: Optional[datetime] = None) -> int:
+        """Roll back due timed actions; safe to call repeatedly and at startup."""
+        current = now or clock.now()
+        with self._lock:
+            responders = {responder.name: responder for responder in self._responders}
+            due = [
+                action for action in self._recent
+                if action.status in {EXECUTED, EXPIRING, EXPIRATION_FAILED}
+                and action.expires_at is not None
+                and action.expires_at <= current
+                and action.responder in responders
+            ]
+            for action in due:
+                action.status = EXPIRING
+
+        expired = 0
+        for action in due:
+            self._persist(action)
+            responder = responders[action.responder]
+            try:
+                success, error = responder.expire(action)
+            except Exception as exc:
+                success, error = False, str(exc)
+            action.expired_at = current
+            if success:
+                action.status = EXPIRED
+                action.error = ""
+                expired += 1
+                logger.warning("Expired response action %s on %s.", action.action_id, action.target)
+            else:
+                action.status = EXPIRATION_FAILED
+                action.error = error
+                logger.error("Failed to expire response action %s: %s", action.action_id, error)
+            self._persist(action)
+        return expired
 
     # ------------------------------------------------------------- approvals
     def approve(self, action_id: str) -> Optional[ResponderAction]:
