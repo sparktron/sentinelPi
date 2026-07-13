@@ -196,7 +196,7 @@ can be overridden.
 YAML threshold overrides. Regressions prove an explicit value wins while unspecified thresholds
 retain the selected profile, and the precedence is documented in the README.
 
-#### M3. SYN-ACK packets are treated as connection initiations
+#### M3. SYN-ACK packets are treated as connection initiations — Resolved
 
 **Issue:** the BPF filter captures every TCP packet with SYN set, including SYN-ACK. The port-scan
 detector checks only for `"S"`, not the absence of `"A"`. Once C1 is fixed, server replies can be
@@ -206,9 +206,10 @@ recorded as reverse connection attempts and can pollute scan and host-profile st
 `src/sentinelpi/capture/packet_capture.py:298-328`, and
 `src/sentinelpi/detectors/port_scan_detector.py:48-57`.
 
-**Required fix:** filter initiation events as SYN && !ACK in BPF and/or parsing, with a regression
-test for `S`, `SA`, and retransmitted SYN behavior. Decide explicitly whether retransmits count once
-per 5-tuple/window.
+**Implemented change:** the BPF and parser now accept TCP SYN without ACK only. A bounded capture
+cache collapses retransmitted SYNs once per 5-tuple/60-second window before event routing, while the
+port-scan detector also rejects synthetic SYN-ACK events. Regressions cover `S`, `SA`, retransmits,
+expiry, and the cache ceiling.
 
 #### M4. Incident-correlation actor maps can grow without bound
 

@@ -168,7 +168,7 @@ Everything above gets you running. Below is the full reference — expand what y
 | Detector | What it finds | Method |
 |----------|---------------|--------|
 | **ARP** | Gateway MAC changes, ARP conflicts, reply floods (MITM signature) | Rule-based |
-| **Port scan** | Vertical scans and subnet sweeps | Sliding-window counters |
+| **Port scan** | Vertical scans and subnet sweeps | Deduplicated SYN-only sliding windows |
 | **Beacon** | Regular outbound intervals (malware C2) | Coefficient of variation |
 | **Connection** | Count spikes, new destinations, new listening ports | Baseline z-score |
 | **DNS** | DGA domains, DNS tunneling, NXDOMAIN floods | Entropy + rate analysis |

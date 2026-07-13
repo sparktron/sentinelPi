@@ -76,7 +76,7 @@ Full validation passes with 443 tests, Ruff, mypy, compileall, and the sample co
 
 ### Phase 3: Resilience And Policy Consistency (Medium)
 
-- [ ] Exclude SYN-ACK/retransmit artifacts from connection-initiation signals.
+- [x] Exclude SYN-ACK/retransmit artifacts from connection-initiation signals.
 - [ ] Bound incident-correlator actor/cooldown maps.
 - [ ] Scope SQLite thread-local connections per `Database` instance/path.
 - [ ] Prevent active response when alert/action persistence fails and surface durable health state.
@@ -85,6 +85,9 @@ Full validation passes with 443 tests, Ruff, mypy, compileall, and the sample co
 
 Exit criteria: malformed or high-cardinality inputs remain bounded, trust behavior matches the UI,
 and no unpersisted alert can cause an armed response.
+
+Status: in progress 2026-07-12. Passive capture now admits only SYN-without-ACK initiations and
+collapses retransmitted 5-tuples for 60 seconds with a bounded cache.
 
 ### Feature Updates After Correctness Work
 

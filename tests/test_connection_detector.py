@@ -96,6 +96,25 @@ class TestPortScanDetector:
         scan_alerts = [a for a in alerts if a.category == AlertCategory.PORT_SCAN]
         assert len(scan_alerts) == 0, "ACK packets should not trigger port scan detection"
 
+    def test_syn_ack_packets_ignored(self, scan_detector):
+        """SYN-ACK replies are not reverse connection attempts."""
+        from sentinelpi.capture.packet_capture import CapturedConnection
+        now = clock.now()
+
+        for port in range(1, 100):
+            alerts = scan_detector.process_event(CapturedConnection(
+                timestamp=now,
+                src_ip="192.168.1.100",
+                src_port=port,
+                dst_ip="192.168.1.50",
+                dst_port=50000,
+                protocol="tcp",
+                flags="SA",
+            ))
+            assert alerts == []
+
+        assert scan_detector._scan_ports == {}
+
     def test_udp_events_ignored(self, scan_detector):
         """UDP events should be ignored by TCP port scan detector."""
         from sentinelpi.capture.packet_capture import CapturedConnection
