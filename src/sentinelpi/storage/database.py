@@ -28,7 +28,7 @@ from ..models import Alert, AlertStatus, Device, Severity, AlertCategory
 logger = logging.getLogger(__name__)
 
 # Current schema version — bump when adding migrations
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Thread-local storage for per-thread SQLite connections
 _thread_local = threading.local()
@@ -132,6 +132,8 @@ class Database:
             self._migrate_v8(conn)
         if current_version < 9:
             self._migrate_v9(conn)
+        if current_version < 10:
+            self._migrate_v10(conn)
 
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
@@ -346,6 +348,33 @@ class Database:
         """)
         logger.info("Database migration v9 applied.")
 
+    def _migrate_v10(self, conn: sqlite3.Connection) -> None:
+        """Durable active-response action ledger."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS response_actions (
+                action_id   TEXT PRIMARY KEY,
+                alert_id    TEXT,
+                responder   TEXT NOT NULL,
+                target      TEXT NOT NULL,
+                description TEXT NOT NULL,
+                commands    TEXT NOT NULL,
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL,
+                status      TEXT NOT NULL,
+                dry_run     INTEGER NOT NULL DEFAULT 1,
+                executed    INTEGER NOT NULL DEFAULT 0,
+                success     INTEGER NOT NULL DEFAULT 0,
+                error       TEXT NOT NULL DEFAULT '',
+                expires_at  TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_response_actions_created
+                ON response_actions(created_at);
+            CREATE INDEX IF NOT EXISTS idx_response_actions_status
+                ON response_actions(status);
+        """)
+        logger.info("Database migration v10 applied.")
+
     # ------------------------------------------------------------------
     # Durable application state
     # ------------------------------------------------------------------
@@ -384,6 +413,66 @@ class Database:
             """
         ).fetchone()
         return str(row["earliest"]) if row and row["earliest"] else None
+
+    # ------------------------------------------------------------------
+    # Active-response action ledger
+    # ------------------------------------------------------------------
+
+    def save_response_action(self, action: Any) -> None:
+        """Persist the latest lifecycle state of a responder action."""
+        expires_at = getattr(action, "expires_at", None)
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO response_actions
+                  (action_id, alert_id, responder, target, description, commands,
+                   created_at, updated_at, status, dry_run, executed, success,
+                   error, expires_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(action_id) DO UPDATE SET
+                  alert_id = excluded.alert_id,
+                  responder = excluded.responder,
+                  target = excluded.target,
+                  description = excluded.description,
+                  commands = excluded.commands,
+                  updated_at = excluded.updated_at,
+                  status = excluded.status,
+                  dry_run = excluded.dry_run,
+                  executed = excluded.executed,
+                  success = excluded.success,
+                  error = excluded.error,
+                  expires_at = excluded.expires_at
+                """,
+                (
+                    action.action_id,
+                    action.alert_id,
+                    action.responder,
+                    action.target,
+                    action.description,
+                    json.dumps(action.commands),
+                    action.created_at.isoformat(),
+                    clock.now().isoformat(),
+                    action.status,
+                    int(action.dry_run),
+                    int(action.executed),
+                    int(action.success),
+                    action.error,
+                    expires_at.isoformat() if expires_at is not None else None,
+                ),
+            )
+
+    def get_response_actions(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """Return the newest responder actions in chronological order."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT * FROM (
+                SELECT * FROM response_actions ORDER BY created_at DESC LIMIT ?
+            ) ORDER BY created_at ASC
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------
     # Alert CRUD

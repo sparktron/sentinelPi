@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
+from datetime import datetime
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 from .base import BaseResponder, ResponderAction, PLANNED, PENDING, EXECUTED, FAILED, REJECTED
@@ -33,22 +34,77 @@ logger = logging.getLogger(__name__)
 class ResponderManager:
     """Runs applicable responders for an alert, under explicit safety gating."""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config, db=None) -> None:
         self.config = config
+        self._db = db
         self._responders: List[BaseResponder] = []
         self._lock = threading.Lock()
         # Recent actions (any status) for the dashboard / audit.
         self._recent: Deque[ResponderAction] = deque(maxlen=200)
         # action_id → (action, responder) for actions awaiting approval.
         self._pending: Dict[str, Tuple[ResponderAction, BaseResponder]] = {}
+        # Pending rows are rehydrated before responders are registered; bind
+        # them by responder name as add_responder() is called.
+        self._unbound_pending: Dict[str, ResponderAction] = {}
         # Optional callback fired when an action is queued for approval, so an
         # actionable notifier (e.g. ntfy) can push Approve/Reject buttons.
         self._pending_notifier: Optional[Callable[[ResponderAction], None]] = None
+        self._load_actions()
 
     def add_responder(self, responder: BaseResponder) -> None:
         with self._lock:
             self._responders.append(responder)
+            for action_id, action in list(self._unbound_pending.items()):
+                if action.responder == responder.name:
+                    self._pending[action_id] = (action, responder)
+                    del self._unbound_pending[action_id]
         logger.debug("Registered responder: %s", responder.name)
+
+    def _load_actions(self) -> None:
+        """Rehydrate recent history and pending approvals from the database."""
+        if self._db is None:
+            return
+        try:
+            rows = self._db.get_response_actions(limit=self._recent.maxlen or 200)
+        except Exception as exc:
+            logger.error("Failed to load responder action history: %s", exc)
+            return
+        for row in rows:
+            try:
+                action = self._action_from_row(row)
+            except (TypeError, ValueError) as exc:
+                logger.warning("Skipping invalid persisted responder action: %s", exc)
+                continue
+            self._recent.append(action)
+            if action.status == PENDING:
+                self._unbound_pending[action.action_id] = action
+
+    @staticmethod
+    def _action_from_row(row: dict) -> ResponderAction:
+        import json
+
+        return ResponderAction(
+            responder=str(row["responder"]),
+            target=str(row["target"]),
+            description=str(row["description"]),
+            commands=json.loads(row["commands"] or "[]"),
+            action_id=str(row["action_id"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            status=str(row["status"]),
+            dry_run=bool(row["dry_run"]),
+            executed=bool(row["executed"]),
+            success=bool(row["success"]),
+            error=str(row["error"] or ""),
+            alert_id=str(row["alert_id"] or ""),
+        )
+
+    def _persist(self, action: ResponderAction) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.save_response_action(action)
+        except Exception as exc:
+            logger.error("Failed to persist responder action %s: %s", action.action_id, exc)
 
     def set_pending_notifier(self, callback: Callable[[ResponderAction], None]) -> None:
         """Register a callback invoked with each action newly queued for approval."""
@@ -97,6 +153,7 @@ class ResponderManager:
                     self._run(action, responder)
 
                 actions.append(action)
+                self._persist(action)
             except Exception as exc:
                 logger.error("Responder %s failed on alert %s: %s", responder.name, alert.alert_id, exc)
 
@@ -115,6 +172,7 @@ class ResponderManager:
     def _run(self, action: ResponderAction, responder: BaseResponder) -> None:
         responder.execute(action)
         action.status = EXECUTED if action.success else FAILED
+        self._persist(action)
 
     # ------------------------------------------------------------- approvals
     def approve(self, action_id: str) -> Optional[ResponderAction]:
@@ -137,6 +195,7 @@ class ResponderManager:
             return None
         action, _ = entry
         action.status = REJECTED
+        self._persist(action)
         logger.info("Rejected action %s (%s on %s).", action_id, action.responder, action.target)
         return action
 

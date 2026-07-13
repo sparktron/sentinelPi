@@ -302,7 +302,7 @@ class SentinelPi:
         rc = self.config.response
         if not rc.enabled:
             return
-        manager = ResponderManager(self.config)
+        manager = ResponderManager(self.config, self._db)
         if rc.firewall_block_enabled:
             manager.add_responder(FirewallResponder(self.config))
         if rc.dns_sinkhole_enabled:

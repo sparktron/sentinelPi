@@ -35,6 +35,7 @@ EXPECTED_TABLES = {
     "host_profile",
     "suspicion_history",
     "app_state",
+    "response_actions",
 }
 
 
