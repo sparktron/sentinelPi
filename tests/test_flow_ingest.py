@@ -183,8 +183,8 @@ def _v9_data_flowset(template_id, records):
     return struct.pack("!HH", template_id, 4 + len(data)) + data
 
 
-def _build_v9(records, template_id=256, with_template=True):
-    header = struct.pack("!HHIIII", 9, 0, 0, 0, 0, 0)
+def _build_v9(records, template_id=256, with_template=True, source_id=0):
+    header = struct.pack("!HHIIII", 9, 0, 0, 0, 0, source_id)
     body = b""
     if with_template:
         body += _v9_template_flowset(template_id, set_id=0)
@@ -192,8 +192,8 @@ def _build_v9(records, template_id=256, with_template=True):
     return header + body
 
 
-def _build_ipfix(records, template_id=256, with_template=True):
-    header = struct.pack("!HHIII", 10, 0, 0, 0, 0)
+def _build_ipfix(records, template_id=256, with_template=True, observation_domain=0):
+    header = struct.pack("!HHIII", 10, 0, 0, 0, observation_domain)
     body = b""
     if with_template:
         # IPFIX template set id == 2.
@@ -247,7 +247,7 @@ def test_parse_netflow_dispatch_and_unknown_version():
 # --------------------------------------------------------------- NetFlowCollector
 def test_collector_handle_datagram_emits_events():
     q: "queue.Queue" = queue.Queue()
-    collector = NetFlowCollector(q)
+    collector = NetFlowCollector(q, allowed_exporters=["192.168.1.1"])
     pkt = _build_v5([{"src": "192.168.1.10", "dst": "9.9.9.9", "sport": 5,
                       "dport": 443, "proto": 6, "bytes": 64}])
     assert collector._handle_datagram(pkt, "192.168.1.1") == 1
@@ -259,7 +259,7 @@ def test_collector_handle_datagram_emits_events():
 
 def test_collector_template_persists_across_datagrams():
     q: "queue.Queue" = queue.Queue()
-    collector = NetFlowCollector(q)
+    collector = NetFlowCollector(q, allowed_exporters=["10.0.0.1"])
     exporter = "10.0.0.1"
     template_only = struct.pack("!HHIIII", 9, 0, 0, 0, 0, 0) + _v9_template_flowset(256, 0)
     data_only = _build_v9([{"src": "10.0.0.5", "dst": "8.8.4.4", "sport": 1,
@@ -271,8 +271,73 @@ def test_collector_template_persists_across_datagrams():
 
 
 def test_collector_malformed_datagram_is_ignored():
-    collector = NetFlowCollector(queue.Queue())
+    collector = NetFlowCollector(queue.Queue(), allowed_exporters=["1.2.3.4"])
     assert collector._handle_datagram(b"\xff\xff\x00\x01garbage", "1.2.3.4") == 0
+
+
+def test_collector_rejects_untrusted_exporter():
+    collector = NetFlowCollector(queue.Queue(), allowed_exporters=["192.168.1.1"])
+    pkt = _build_v5([{"src": "192.168.1.10", "dst": "9.9.9.9", "sport": 5,
+                      "dport": 443, "proto": 6}])
+
+    assert collector._handle_datagram(pkt, "192.168.1.99") == 0
+    assert collector.rejected_exporters == 1
+    assert collector._templates == {}
+
+
+@pytest.mark.parametrize("version", [9, 10])
+def test_collector_isolates_templates_by_observation_domain(version):
+    q: "queue.Queue" = queue.Queue()
+    exporter = "10.0.0.1"
+    collector = NetFlowCollector(q, allowed_exporters=[exporter])
+    record = {"src": "10.0.0.5", "dst": "8.8.4.4", "sport": 1,
+              "dport": 53, "proto": 17}
+    if version == 9:
+        with_template = _build_v9([record], source_id=11)
+        other_domain_data = _build_v9([record], with_template=False, source_id=12)
+    else:
+        with_template = _build_ipfix([record], observation_domain=11)
+        other_domain_data = _build_ipfix(
+            [record], with_template=False, observation_domain=12
+        )
+
+    assert collector._handle_datagram(with_template, exporter) == 1
+    assert collector._handle_datagram(other_domain_data, exporter) == 0
+    assert (exporter, 11) in collector._templates
+    assert (exporter, 12) in collector._templates
+
+
+def test_collector_bounds_exporters_domains_templates_and_records():
+    q: "queue.Queue" = queue.Queue()
+    collector = NetFlowCollector(
+        q,
+        allowed_exporters=["10.0.0.0/24"],
+        max_exporters=1,
+        max_domains_per_exporter=1,
+        max_templates_per_context=1,
+        max_records_per_datagram=1,
+    )
+    records = [
+        {"src": "10.0.0.5", "dst": "8.8.8.8", "sport": 1, "dport": 53, "proto": 17},
+        {"src": "10.0.0.6", "dst": "9.9.9.9", "sport": 2, "dport": 443, "proto": 6},
+    ]
+
+    assert collector._handle_datagram(_build_v9(records, source_id=1), "10.0.0.1") == 1
+    assert collector._handle_datagram(_build_v9(records, source_id=2), "10.0.0.1") == 1
+    assert list(collector._templates) == [("10.0.0.1", 2)]
+
+    two_templates = (
+        struct.pack("!HHIIII", 9, 0, 0, 0, 0, 3)
+        + _v9_template_flowset(256, 0)
+        + _v9_template_flowset(257, 0)
+    )
+    collector._handle_datagram(two_templates, "10.0.0.1")
+    assert list(collector._templates) == [("10.0.0.1", 3)]
+    assert list(collector._templates[("10.0.0.1", 3)]) == [257]
+
+    collector._handle_datagram(_build_v9([], source_id=1), "10.0.0.2")
+    assert {exporter for exporter, _domain in collector._templates} == {"10.0.0.2"}
+    assert collector.cache_evictions >= 3
 
 
 # ------------------------------------------------------------------- filterlog

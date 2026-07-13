@@ -440,6 +440,12 @@ flow:
   netflow_enabled: false
   netflow_bind_host: "0.0.0.0"
   netflow_port: 2055              # common NetFlow/IPFIX collector port
+  # Required when enabled. Prefer exact router/switch IPs; CIDRs are accepted.
+  netflow_allowed_exporters: []   # e.g. ["192.168.1.1", "10.0.0.0/28"]
+  netflow_max_exporters: 16
+  netflow_max_observation_domains_per_exporter: 32
+  netflow_max_templates_per_context: 256
+  netflow_max_records_per_datagram: 4096
   # pfSense/OPNsense: tail filterlog. Point at a file the Pi can read — usually
   # the firewall's syslog forwarded to the Pi and written out by rsyslog.
   filterlog_enabled: false

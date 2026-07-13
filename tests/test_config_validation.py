@@ -40,6 +40,8 @@ def test_validate_config_rejects_invalid_ports_and_enums():
     config.response.firewall_backend = "pf"
     config.reporting.daily_report_hour = 24
     config.reporting.weekly_report_day = 7
+    config.flow.netflow_enabled = True
+    config.flow.netflow_allowed_exporters = ["not-an-exporter"]
 
     paths = _issue_paths(config)
 
@@ -50,6 +52,17 @@ def test_validate_config_rejects_invalid_ports_and_enums():
     assert "response.firewall_backend" in paths
     assert "reporting.daily_report_hour" in paths
     assert "reporting.weekly_report_day" in paths
+    assert "flow.netflow_allowed_exporters[0]" in paths
+
+
+def test_validate_config_requires_netflow_exporter_allowlist():
+    config = Config()
+    config.flow.netflow_enabled = True
+
+    assert "flow.netflow_allowed_exporters" in _issue_paths(config)
+
+    config.flow.netflow_allowed_exporters = ["192.168.1.1", "10.0.0.0/24"]
+    assert "flow.netflow_allowed_exporters" not in _issue_paths(config)
 
 
 def test_validate_config_rejects_invalid_siem_settings():

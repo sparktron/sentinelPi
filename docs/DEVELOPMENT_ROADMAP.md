@@ -5,10 +5,10 @@ _Created: 2026-06-10. Scope: full repository review of `src/`, `tests/`, `config
 
 ## Review Summary
 
-SentinelPi has a solid structure and a broad regression suite: 418 tests pass after the 2026-07-12
-Phase 0 and Phase 1 fixes. Runtime detector wiring and restart-safe learning/response state are now
-in place. The highest-value work is Phase 2: ensuring every public configuration switch has a
-tested runtime effect and tightening deployment/configuration safety.
+SentinelPi has a solid structure and a broad regression suite: 443 tests pass after the 2026-07-12
+Phase 0 through Phase 2 fixes. Runtime detector wiring, restart-safe learning/response state,
+configuration truthfulness, deployment least privilege, and bounded flow-ingest trust are now in
+place. The highest-value remaining work is Phase 3 resilience and policy consistency.
 
 Severity legend: Critical means detection or shutdown correctness can be wrong in normal use.
 High means likely operator confusion, noisy detection, or degraded reliability. Medium means
@@ -20,9 +20,10 @@ The current review is documented in full in [`CODE_REVIEW.md`](CODE_REVIEW.md). 
 green (405 tests, Ruff, mypy, and compileall), but service-level tracing found runtime gaps not
 covered by isolated component tests. Phase 0 was completed the same day and raised the suite to
 408 tests. Phase 1 then completed restart-safe learning, response persistence/expiration,
-threat-feed health, and final baseline flushing, raising the suite to 418 tests. This backlog
-supersedes the older completed phases for new work; historical items below remain as implementation
-history.
+threat-feed health, and final baseline flushing, raising the suite to 418 tests. Phase 2 then
+completed configuration/deployment safety, raising the suite to 443 tests. This
+backlog supersedes the older completed phases for new work; historical items below remain as
+implementation history.
 
 ### Phase 0: Restore Advertised Detection (Critical)
 
@@ -57,18 +58,21 @@ have a durable audit record, and threat-feed health is visible per feed.
   scheduled reports, and traffic-spike monitoring.
 - [x] Split passive and active-response deployment capabilities; default to `NET_RAW` without
   `NET_ADMIN`, and make the configured sinkhole target writable when that responder is enabled.
-- [ ] Add NetFlow exporter allowlisting, observation-domain-aware template caches, and cache limits.
+- [x] Add NetFlow exporter allowlisting, observation-domain-aware template caches, and cache limits.
 
 Exit criteria: every documented public option has a tested runtime effect, startup cannot silently
 fall back from an explicitly requested config, and default deployments use least privilege.
 
-Status: in progress 2026-07-12. Normal startup now validates before subsystem initialization,
+Status: completed 2026-07-12. Normal startup now validates before subsystem initialization,
 explicit and environment-selected config load failures are fatal, and unknown YAML keys report
 their full path. Threshold precedence is now defaults, then profile, then explicit values.
 DNS capture/detection disabling, bounded active ARP discovery, SHA-256 file monitoring,
 restart-safe scheduled summaries, and per-interface traffic-spike polling are now wired and tested.
 Default systemd and Compose deployments now grant only `NET_RAW`; explicit response overrides add
 `NET_ADMIN`, and hosts-file sinkhole state defaults to the writable data directory.
+NetFlow/IPFIX now requires trusted exporter networks, isolates template caches by exporter and
+observation domain, and caps exporters, domains, templates, and records per datagram.
+Full validation passes with 443 tests, Ruff, mypy, compileall, and the sample configuration check.
 
 ### Phase 3: Resilience And Policy Consistency (Medium)
 

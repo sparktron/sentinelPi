@@ -407,6 +407,12 @@ class FlowIngestConfig:
     netflow_enabled: bool = False
     netflow_bind_host: str = "0.0.0.0"
     netflow_port: int = 2055
+    # Required trust boundary when enabled; entries may be IPs or CIDRs.
+    netflow_allowed_exporters: List[str] = field(default_factory=list)
+    netflow_max_exporters: int = 16
+    netflow_max_observation_domains_per_exporter: int = 32
+    netflow_max_templates_per_context: int = 256
+    netflow_max_records_per_datagram: int = 4096
     # pfSense/OPNsense filterlog tailing (point at a file the Pi can read —
     # usually the firewall's syslog forwarded to and written by the Pi's rsyslog).
     filterlog_enabled: bool = False
@@ -622,6 +628,10 @@ def validate_config(config: Config) -> List[ConfigIssue]:
         if not is_int(value) or value < 0:
             add(path, "must be a non-negative integer")
 
+    def check_positive_int(path: str, value: Any) -> None:
+        if not is_int(value) or value < 1:
+            add(path, "must be a positive integer")
+
     def check_positive_number(path: str, value: Any) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
             add(path, "must be a positive number")
@@ -686,6 +696,31 @@ def validate_config(config: Config) -> List[ConfigIssue]:
     if not isinstance(config.dashboard.host, str) or not config.dashboard.host:
         add("dashboard.host", "must be a non-empty string")
     check_port("dashboard.port", config.dashboard.port)
+
+    check_port("flow.netflow_port", config.flow.netflow_port)
+    for path, value in (
+        ("flow.netflow_max_exporters", config.flow.netflow_max_exporters),
+        (
+            "flow.netflow_max_observation_domains_per_exporter",
+            config.flow.netflow_max_observation_domains_per_exporter,
+        ),
+        ("flow.netflow_max_templates_per_context", config.flow.netflow_max_templates_per_context),
+        ("flow.netflow_max_records_per_datagram", config.flow.netflow_max_records_per_datagram),
+    ):
+        check_positive_int(path, value)
+    if not isinstance(config.flow.netflow_allowed_exporters, list):
+        add("flow.netflow_allowed_exporters", "must be a list of IP addresses or CIDRs")
+    else:
+        if config.flow.netflow_enabled and not config.flow.netflow_allowed_exporters:
+            add("flow.netflow_allowed_exporters", "must not be empty when NetFlow is enabled")
+        for idx, exporter in enumerate(config.flow.netflow_allowed_exporters):
+            try:
+                ipaddress.ip_network(exporter, strict=False)
+            except (TypeError, ValueError):
+                add(
+                    f"flow.netflow_allowed_exporters[{idx}]",
+                    "must be an IP address or CIDR network",
+                )
 
     if config.monitoring.sensitivity_profile not in {"conservative", "balanced", "aggressive"}:
         add("monitoring.sensitivity_profile", "must be one of: conservative, balanced, aggressive")

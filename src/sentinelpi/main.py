@@ -538,6 +538,11 @@ class SentinelPi:
                 bind_host=fc.netflow_bind_host,
                 bind_port=fc.netflow_port,
                 stop_event=self._stop_event,
+                allowed_exporters=fc.netflow_allowed_exporters,
+                max_exporters=fc.netflow_max_exporters,
+                max_domains_per_exporter=fc.netflow_max_observation_domains_per_exporter,
+                max_templates_per_context=fc.netflow_max_templates_per_context,
+                max_records_per_datagram=fc.netflow_max_records_per_datagram,
             )
             if collector.start():
                 self._flow_sources.append(collector)

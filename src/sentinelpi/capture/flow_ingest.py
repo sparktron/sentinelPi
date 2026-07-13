@@ -23,6 +23,7 @@ payloads are stored. Operate only on networks you are authorized to monitor.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import queue
@@ -31,9 +32,10 @@ import socket
 import struct
 import subprocess
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from ..utils import clock
 from .packet_capture import CapturedConnection
@@ -266,7 +268,7 @@ _NETFLOW_V5_HEADER = struct.Struct("!HHIIIIBBH")   # 24 bytes
 _NETFLOW_V5_RECORD = struct.Struct("!IIIHHIIIIHHBBBBHHBBH")  # 48 bytes
 
 
-def parse_netflow_v5(data: bytes) -> List[FlowRecord]:
+def parse_netflow_v5(data: bytes, max_records: int = 4096) -> List[FlowRecord]:
     """Parse a NetFlow v5 export packet (fixed 48-byte records, no templates)."""
     if len(data) < _NETFLOW_V5_HEADER.size:
         return []
@@ -275,7 +277,7 @@ def parse_netflow_v5(data: bytes) -> List[FlowRecord]:
         return []
     flows: List[FlowRecord] = []
     offset = _NETFLOW_V5_HEADER.size
-    for _ in range(count):
+    for _ in range(min(count, max_records)):
         end = offset + _NETFLOW_V5_RECORD.size
         if end > len(data):
             break
@@ -370,6 +372,7 @@ def _parse_v9_like(
     header_len: int,
     template_set_id: int,
     options_set_id: int,
+    max_records: int,
 ) -> List[FlowRecord]:
     """
     Shared NetFlow-v9 / IPFIX flowset walker. ``templates`` is mutated in place
@@ -378,6 +381,7 @@ def _parse_v9_like(
     skipped until its template arrives.
     """
     flows: List[FlowRecord] = []
+    records_seen = 0
     off = header_len
     n = len(data)
     while off + 4 <= n:
@@ -396,39 +400,70 @@ def _parse_v9_like(
                 record_len = sum(flen for _, flen in fields)
                 if record_len > 0:
                     count = len(body) // record_len
-                    for i in range(count):
+                    remaining = max_records - records_seen
+                    records_in_set = min(count, remaining)
+                    for i in range(records_in_set):
                         rec = _decode_v9_record(fields, body[i * record_len:(i + 1) * record_len])
                         if rec is not None:
                             flows.append(rec)
+                    records_seen += records_in_set
+                    if records_seen >= max_records:
+                        break
         off += set_len
     return flows
 
 
-def parse_netflow_v9(data: bytes, templates: Dict[int, List[Tuple[int, int]]]) -> List[FlowRecord]:
+def parse_netflow_v9(
+    data: bytes,
+    templates: Dict[int, List[Tuple[int, int]]],
+    max_records: int = 4096,
+) -> List[FlowRecord]:
     """Parse a NetFlow v9 export packet. Template set id 0, options id 1."""
     if len(data) < 20:
         return []
-    return _parse_v9_like(data, templates, header_len=20, template_set_id=0, options_set_id=1)
+    return _parse_v9_like(
+        data,
+        templates,
+        header_len=20,
+        template_set_id=0,
+        options_set_id=1,
+        max_records=max_records,
+    )
 
 
-def parse_ipfix(data: bytes, templates: Dict[int, List[Tuple[int, int]]]) -> List[FlowRecord]:
+def parse_ipfix(
+    data: bytes,
+    templates: Dict[int, List[Tuple[int, int]]],
+    max_records: int = 4096,
+) -> List[FlowRecord]:
     """Parse an IPFIX (NetFlow v10) export packet. Template set id 2, options id 3."""
     if len(data) < 16:
         return []
-    return _parse_v9_like(data, templates, header_len=16, template_set_id=2, options_set_id=3)
+    return _parse_v9_like(
+        data,
+        templates,
+        header_len=16,
+        template_set_id=2,
+        options_set_id=3,
+        max_records=max_records,
+    )
 
 
-def parse_netflow(data: bytes, templates: Dict[int, List[Tuple[int, int]]]) -> List[FlowRecord]:
+def parse_netflow(
+    data: bytes,
+    templates: Dict[int, List[Tuple[int, int]]],
+    max_records: int = 4096,
+) -> List[FlowRecord]:
     """Dispatch a flow-export datagram to the right parser by version word."""
     if len(data) < 2:
         return []
     version = struct.unpack("!H", data[:2])[0]
     if version == 5:
-        return parse_netflow_v5(data)
+        return parse_netflow_v5(data, max_records=max_records)
     if version == 9:
-        return parse_netflow_v9(data, templates)
+        return parse_netflow_v9(data, templates, max_records=max_records)
     if version == 10:
-        return parse_ipfix(data, templates)
+        return parse_ipfix(data, templates, max_records=max_records)
     logger.debug("Ignoring unsupported NetFlow version %d.", version)
     return []
 
@@ -447,6 +482,11 @@ class NetFlowCollector:
         bind_host: str = "0.0.0.0",
         bind_port: int = 2055,
         stop_event: Optional[threading.Event] = None,
+        allowed_exporters: Sequence[str] = (),
+        max_exporters: int = 16,
+        max_domains_per_exporter: int = 32,
+        max_templates_per_context: int = 256,
+        max_records_per_datagram: int = 4096,
     ) -> None:
         self._queue = event_queue
         self._host = bind_host
@@ -455,10 +495,23 @@ class NetFlowCollector:
         self._stop = threading.Event()
         self._sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
-        # template cache keyed by (exporter_ip, source_id) -> {template_id: fields}
-        self._templates: Dict[Tuple[str, int], Dict[int, List[Tuple[int, int]]]] = {}
+        self._allowed_exporters = [
+            ipaddress.ip_network(value, strict=False) for value in allowed_exporters
+        ]
+        self._max_exporters = max(1, int(max_exporters))
+        self._max_domains_per_exporter = max(1, int(max_domains_per_exporter))
+        self._max_templates_per_context = max(1, int(max_templates_per_context))
+        self._max_records_per_datagram = max(1, int(max_records_per_datagram))
+        # LRU template cache keyed by (exporter_ip, source/observation domain id).
+        self._templates: OrderedDict[
+            Tuple[str, int], Dict[int, List[Tuple[int, int]]]
+        ] = OrderedDict()
+        self._exporters: OrderedDict[str, None] = OrderedDict()
         self.emitted = 0
         self.dropped = 0
+        self.rejected_exporters = 0
+        self.malformed = 0
+        self.cache_evictions = 0
 
     def start(self) -> bool:
         """Bind the UDP socket and start the receive thread. False on bind error."""
@@ -500,14 +553,30 @@ class NetFlowCollector:
 
     def _handle_datagram(self, data: bytes, exporter: str) -> int:
         """Parse one datagram and enqueue its flows. Returns count emitted."""
-        # Templates persist per exporter; source/observation id lives in the
-        # header but a single key per exporter is sufficient for home use.
-        templates = self._templates.setdefault((exporter, 0), {})
+        if not self._exporter_allowed(exporter):
+            self.rejected_exporters += 1
+            if self.rejected_exporters == 1 or self.rejected_exporters % 1000 == 0:
+                logger.warning(
+                    "Rejected %d NetFlow/IPFIX datagram(s); latest untrusted exporter: %s",
+                    self.rejected_exporters,
+                    exporter,
+                )
+            return 0
+
+        context = self._template_context(data, exporter)
+        if context is None:
+            self.malformed += 1
+            return 0
+        templates = self._get_template_cache(*context)
         try:
-            flows = parse_netflow(data, templates)
+            flows = parse_netflow(
+                data, templates, max_records=self._max_records_per_datagram
+            )
         except Exception as exc:
+            self.malformed += 1
             logger.debug("Malformed flow packet from %s: %s", exporter, exc)
             return 0
+        self._trim_templates(templates)
         emitted = 0
         for flow in flows:
             if _enqueue(self._queue, flow):
@@ -516,6 +585,63 @@ class NetFlowCollector:
             else:
                 self.dropped += 1
         return emitted
+
+    def _exporter_allowed(self, exporter: str) -> bool:
+        try:
+            address = ipaddress.ip_address(exporter)
+        except ValueError:
+            return False
+        return any(address in network for network in self._allowed_exporters)
+
+    @staticmethod
+    def _template_context(data: bytes, exporter: str) -> Optional[Tuple[str, int]]:
+        if len(data) < 2:
+            return None
+        version = struct.unpack("!H", data[:2])[0]
+        if version == 5:
+            return exporter, 0
+        if version == 9 and len(data) >= 20:
+            return exporter, struct.unpack("!I", data[16:20])[0]
+        if version == 10 and len(data) >= 16:
+            return exporter, struct.unpack("!I", data[12:16])[0]
+        return None
+
+    def _get_template_cache(
+        self, exporter: str, domain_id: int
+    ) -> Dict[int, List[Tuple[int, int]]]:
+        key = (exporter, domain_id)
+        existing = self._templates.get(key)
+        if existing is not None:
+            self._templates.move_to_end(key)
+            self._exporters.move_to_end(exporter)
+            return existing
+
+        if exporter not in self._exporters:
+            while len(self._exporters) >= self._max_exporters:
+                stale_exporter, _ = self._exporters.popitem(last=False)
+                stale_keys = [item for item in self._templates if item[0] == stale_exporter]
+                for stale_key in stale_keys:
+                    del self._templates[stale_key]
+                    self.cache_evictions += 1
+            self._exporters[exporter] = None
+        else:
+            self._exporters.move_to_end(exporter)
+
+        exporter_keys = [item for item in self._templates if item[0] == exporter]
+        while len(exporter_keys) >= self._max_domains_per_exporter:
+            stale_key = exporter_keys.pop(0)
+            del self._templates[stale_key]
+            self.cache_evictions += 1
+
+        templates: Dict[int, List[Tuple[int, int]]] = {}
+        self._templates[key] = templates
+        return templates
+
+    def _trim_templates(self, templates: Dict[int, List[Tuple[int, int]]]) -> None:
+        while len(templates) > self._max_templates_per_context:
+            oldest = next(iter(templates))
+            del templates[oldest]
+            self.cache_evictions += 1
 
 
 # ---------------------------------------------------------------------------

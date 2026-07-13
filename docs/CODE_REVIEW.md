@@ -1,7 +1,7 @@
 # SentinelPi Repository-Wide Code Review
 
 _Review date: 2026-07-12 · Scope: application code, tests, configuration, deployment,
-operator documentation, and packaging._
+operator documentation, and packaging. Phase 2 completion validated 2026-07-12._
 
 ## Executive Summary
 
@@ -23,8 +23,11 @@ restarts; response plans/results/approvals/expirations have a durable ledger; ti
 nftables blocks reconcile after restart; and watchdog status reports overall and per-feed
 threat-intelligence refresh health. The full suite now contains 418 tests.
 
-The next most important work is Phase 2 configuration truthfulness and deployment safety: make
-every public switch observable, reduce default capabilities, and harden flow-ingest trust bounds.
+**Phase 2 status (2026-07-12): resolved.** Normal startup fails closed, profile overrides are
+predictable, public monitoring switches are wired, default deployments use least privilege, and
+NetFlow/IPFIX ingest has bounded exporter/domain trust state. The full suite now contains 443 tests.
+
+The next most important work is Phase 3 resilience and policy consistency.
 
 Severity legend: **Critical** = a core advertised security behavior is absent or bypassed in normal
 operation; **High** = material detection, response, security, or operator-trust failure;
@@ -147,7 +150,7 @@ systemd/Compose active-response overrides add `NET_ADMIN`. The default hosts-fil
 under `/var/lib/sentinelpi`, and preflight verifies the configured target (or its parent) is
 writable. Static manifest and preflight regressions cover the boundary.
 
-#### H6. NetFlow/IPFIX ingestion has no exporter trust boundary
+#### H6. NetFlow/IPFIX ingestion has no exporter trust boundary — Resolved
 
 **Issue:** when enabled, the UDP collector accepts datagrams from any source address and feeds them
 directly into baselines and detectors. An untrusted LAN host can inject false flows, create alerts,
@@ -158,10 +161,10 @@ domain, so template IDs can collide for multi-domain exporters.
 **Evidence:** `src/sentinelpi/capture/flow_ingest.py:436-459` and
 `src/sentinelpi/capture/flow_ingest.py:489-517`.
 
-**Required fix:** add an exporter IP allowlist (required for non-loopback binds), parse and include
-NetFlow v9 source ID/IPFIX observation-domain ID in cache keys, cap template exporters/templates,
-and expose rejected/malformed counters. For stronger assurance, support authenticated transport via
-a local collector/proxy rather than raw remote UDP.
+**Implemented change:** enabled collectors require an exporter IP/CIDR allowlist. NetFlow v9 source
+IDs and IPFIX observation-domain IDs are included in LRU cache keys; exporter, domain, template, and
+record counts are capped. Rejected, malformed, and cache-eviction counters are exposed on the
+collector. Authenticated transport via a local collector/proxy remains a stronger optional layer.
 
 ### Medium
 

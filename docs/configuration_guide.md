@@ -343,6 +343,11 @@ flow:
   netflow_enabled: false
   netflow_bind_host: "0.0.0.0"
   netflow_port: 2055
+  netflow_allowed_exporters: ["192.168.1.1"]  # required when enabled; IPs or CIDRs
+  netflow_max_exporters: 16
+  netflow_max_observation_domains_per_exporter: 32
+  netflow_max_templates_per_context: 256
+  netflow_max_records_per_datagram: 4096
 
   # pfSense/OPNsense filterlog — forward the firewall's syslog to the Pi and
   # write it to a file (rsyslog), then point filterlog_path at that file
@@ -350,6 +355,12 @@ flow:
   filterlog_path: /var/log/filter.log
   filterlog_interval_seconds: 5
 ```
+
+The UDP collector rejects exporters outside `netflow_allowed_exporters`. NetFlow v9 source IDs and
+IPFIX observation-domain IDs isolate template namespaces; the remaining limits bound exporter,
+domain, template, and per-datagram record work. Use exact exporter IPs unless a CIDR is operationally
+necessary. Raw NetFlow UDP is not authenticated, so keep the listener on a trusted management
+network or place a local authenticated collector/proxy in front of SentinelPi.
 
 ## Whitelisting
 

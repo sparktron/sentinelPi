@@ -238,7 +238,8 @@ Go beyond a single host:
   escalated into a single `INCIDENT` instead of N scattered alerts.
 - **Router / firewall flow ingest.** Feed `conntrack`, **NetFlow v5/v9 / IPFIX**, and pfSense/OPNsense
   `filterlog` exports so SentinelPi analyzes flows it could never sniff directly — every connection
-  detector works on them unchanged.
+  detector works on them unchanged. NetFlow/IPFIX requires an exporter IP/CIDR allowlist and keeps
+  observation-domain templates in bounded caches.
 - **SPAN / mirror-port mode.** Plug the Pi into a switch mirror port and set `network.mirror_mode: true`
   to capture *all* subnet traffic in promiscuous mode, not just this host's.
 - **DHCP-lease identity.** Name devices from your DHCP server's leases (dnsmasq / ISC) instead of guessing.
