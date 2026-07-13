@@ -30,10 +30,6 @@ logger = logging.getLogger(__name__)
 # Current schema version — bump when adding migrations
 SCHEMA_VERSION = 11
 
-# Thread-local storage for per-thread SQLite connections
-_thread_local = threading.local()
-
-
 class Database:
     """
     SQLite-backed store for alerts, devices, baseline metrics, and DNS observations.
@@ -45,6 +41,8 @@ class Database:
     def __init__(self, db_path: str, retention_days: int = 30) -> None:
         self.db_path = db_path
         self.retention_days = retention_days
+        # Each Database instance owns its own per-thread connection namespace.
+        self._local = threading.local()
         # Ensure parent directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         # Initialize schema on the calling thread
@@ -57,7 +55,7 @@ class Database:
 
     def _get_connection(self) -> sqlite3.Connection:
         """Return (or create) the thread-local SQLite connection."""
-        conn = getattr(_thread_local, "conn", None)
+        conn = getattr(self._local, "conn", None)
         if conn is None:
             conn = sqlite3.connect(
                 self.db_path,
@@ -70,7 +68,7 @@ class Database:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA cache_size=-4096")  # 4 MB cache
-            _thread_local.conn = conn
+            self._local.conn = conn
             logger.debug("Opened new SQLite connection on thread %s", threading.current_thread().name)
         return conn
 
@@ -94,10 +92,10 @@ class Database:
 
     def close(self) -> None:
         """Close the thread-local connection if open."""
-        conn = getattr(_thread_local, "conn", None)
+        conn = getattr(self._local, "conn", None)
         if conn:
             conn.close()
-            _thread_local.conn = None
+            self._local.conn = None
 
     # ------------------------------------------------------------------
     # Schema management

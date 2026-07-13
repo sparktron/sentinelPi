@@ -90,3 +90,21 @@ def test_stale_version_runs_pending_migrations(tmp_path):
         assert EXPECTED_TABLES.issubset(_tables(db2))
     finally:
         db2.close()
+
+
+def test_database_instances_do_not_share_same_thread_connection(tmp_path):
+    first = Database(db_path=str(tmp_path / "first.db"), retention_days=7)
+    second = Database(db_path=str(tmp_path / "second.db"), retention_days=7)
+    try:
+        first.set_app_state("owner", "first")
+        second.set_app_state("owner", "second")
+
+        assert first._get_connection() is not second._get_connection()
+        assert first.get_app_state("owner") == "first"
+        assert second.get_app_state("owner") == "second"
+
+        first.close()
+        assert second.get_app_state("owner") == "second"
+    finally:
+        first.close()
+        second.close()

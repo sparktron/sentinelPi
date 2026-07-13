@@ -372,7 +372,7 @@ next startup; newer ones are refused unless you pass `--force`.
 | `intel/` | Threat-feed download, caching, and matching |
 | `alerts/` | Dedup, cooldown, correlation, notification routing |
 | `responders/` | Optional, gated active-response actions |
-| `storage/` | SQLite persistence (WAL mode, thread-safe, migrations) |
+| `storage/` | SQLite persistence (WAL, per-instance thread-local connections, migrations) |
 | `ui/` | Flask web dashboard + multi-sensor collector |
 | `config/` | YAML loading and validation |
 | `utils/` | Network helpers, GeoIP/ASN, timezone-aware clock |

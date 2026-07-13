@@ -225,7 +225,7 @@ configurable `correlation.max_actors` ceiling evicts least-recently-seen actors 
 and `/api/status` exposes tracked state plus eviction/expiry counters. High-cardinality and
 multi-window regressions cover the bounds.
 
-#### M5. Database connection storage is global across Database instances
+#### M5. Database connection storage is global across Database instances — Resolved
 
 **Issue:** module-level `_thread_local.conn` is not keyed by `Database` instance or path. Creating
 two `Database` objects on the same thread can make the second reuse the first database's connection.
@@ -234,9 +234,9 @@ This is surprising in tests, maintenance commands, and future multi-database use
 **Evidence:** `src/sentinelpi/storage/database.py:33-34` and
 `src/sentinelpi/storage/database.py:58-75`.
 
-**Required fix:** store thread-local state per instance (for example `self._local`) or key a
-connection map by canonical database path. Add a regression test that writes independently to two
-temporary databases in one thread.
+**Implemented change:** every `Database` now owns its own `threading.local()` namespace. A regression
+writes distinct state to two database paths on one thread and proves closing one instance does not
+close or redirect the other.
 
 #### M6. Alert processing can execute a response after audit persistence fails
 
