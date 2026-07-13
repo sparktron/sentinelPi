@@ -60,6 +60,7 @@ from .responders.killswitch import KillSwitchResponder
 from .detectors.arp_detector import ARPDetector
 from .detectors.beacon_detector import BeaconDetector
 from .detectors.connection_detector import ConnectionDetector
+from .detectors.port_scan_detector import PortScanDetector
 from .detectors.dns_detector import DNSDetector
 from .detectors.lateral_movement_detector import LateralMovementDetector
 from .detectors.auth_log_detector import AuthLogDetector
@@ -135,21 +136,23 @@ def build_detector_thread(
     The thread calls poll() every `poll_interval` seconds and passes any
     returned alerts to the explicitly-provided alert manager.
     """
+    thread_name = name or getattr(detector_instance, "name", type(detector_instance).__name__)
+
     def _run():
-        logger.info("%s thread started.", detector_instance.name)
+        logger.info("%s thread started.", thread_name)
         while not stop_event.is_set():
             try:
                 alerts = detector_instance.poll()
                 if alerts:
                     alert_manager.process(alerts)
             except Exception as exc:
-                logger.error("%s poll error: %s", detector_instance.name, exc, exc_info=True)
+                logger.error("%s poll error: %s", thread_name, exc, exc_info=True)
             stop_event.wait(timeout=poll_interval)
-        logger.info("%s thread stopped.", detector_instance.name)
+        logger.info("%s thread stopped.", thread_name)
 
     thread = threading.Thread(
         target=_run,
-        name=name or detector_instance.name,
+        name=thread_name,
         daemon=True,
     )
     return thread
@@ -205,6 +208,7 @@ class SentinelPi:
         self._arp_detector = ARPDetector(**detector_kwargs)
         self._beacon_detector = BeaconDetector(**detector_kwargs)
         self._connection_detector = ConnectionDetector(**detector_kwargs)
+        self._port_scan_detector = PortScanDetector(**detector_kwargs)
         self._dns_detector = DNSDetector(**detector_kwargs)
         self._lateral_detector = LateralMovementDetector(**detector_kwargs)
         self._auth_detector = AuthLogDetector(**detector_kwargs)
@@ -409,6 +413,7 @@ class SentinelPi:
             self._dns_detector,
             self._beacon_detector,
             self._connection_detector,
+            self._port_scan_detector,
             self._lateral_detector,
         ]
         for optional in (
@@ -518,30 +523,26 @@ class SentinelPi:
             logger.info("Flow ingest active: %s", ", ".join(started))
             self._ensure_event_router()
 
-    def _start_polling_threads(self) -> None:
-        """Start all detector polling threads."""
-        poll_configs = [
+    def _build_pollers(self) -> list:
+        """Return every component driven by the periodic polling loop."""
+        return [
             (self._device_tracker, 30, "DeviceTracker"),
             (self._connection_detector, 60, "ConnectionDetector"),
+            (self._port_scan_detector, 60, "PortScanDetector"),
             (self._auth_detector, 30, "AuthLogDetector"),
             (self._beacon_detector, 60, "BeaconDetector"),
             (self._lateral_detector, 60, "LateralMovementDetector"),
             (self._arp_detector, 60, "ARPDetector"),
         ]
 
+    def _start_polling_threads(self) -> None:
+        """Start all detector and inventory polling threads."""
+        poll_configs = self._build_pollers()
+
         for det_or_tracker, interval, name in poll_configs:
-            if hasattr(det_or_tracker, "run_forever"):
-                # DeviceTracker has its own loop method
-                t = threading.Thread(
-                    target=det_or_tracker.run_forever,
-                    args=(self._stop_event,),
-                    name=name,
-                    daemon=True,
-                )
-            else:
-                t = build_detector_thread(
-                    det_or_tracker, self._alert_manager, self._stop_event, interval, name
-                )
+            t = build_detector_thread(
+                det_or_tracker, self._alert_manager, self._stop_event, interval, name
+            )
             self._threads.append(t)
             t.start()
             logger.debug("Started thread: %s", name)

@@ -58,9 +58,6 @@ class DeviceTracker:
         # Track ARP churn: timestamps of any MAC change event
         self._churn_times: deque = deque(maxlen=100)
 
-        # Pending alerts to return to caller
-        self._pending_alerts: List[Alert] = []
-
         # Load existing devices from database
         self._load_from_db()
 
@@ -108,8 +105,8 @@ class DeviceTracker:
         """
         Read ARP table and process all entries.
 
-        Returns list of new Alert objects generated during this poll.
-        Alerts are also stored in self._pending_alerts for retrieval.
+        Returns list of new Alert objects generated during this poll. The
+        service polling wrapper dispatches these through AlertManager.
         """
         entries = read_arp_table()
         alerts: List[Alert] = []
@@ -127,9 +124,6 @@ class DeviceTracker:
         churn_alert = self._check_arp_churn()
         if churn_alert:
             alerts.append(churn_alert)
-
-        with self._lock:
-            self._pending_alerts.extend(alerts)
 
         return alerts
 
@@ -383,10 +377,3 @@ class DeviceTracker:
             gw_ip = self.config.network.gateway_ip
             device = self._devices_by_ip.get(gw_ip)
             return device.mac if device else None
-
-    def pop_pending_alerts(self) -> List[Alert]:
-        """Retrieve and clear pending alerts."""
-        with self._lock:
-            alerts = list(self._pending_alerts)
-            self._pending_alerts.clear()
-        return alerts

@@ -38,8 +38,11 @@ step** — not a wall of packets.
 It runs for months on a Pi, works **without root**, stays **quiet** (no alert floods), and can even
 **act** on the worst threats once you trust it to.
 
-Current development follow-ups from the latest code review are tracked in
+The latest repository-wide review is in [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md), with its
+prioritized implementation backlog tracked in
 [docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).
+Phase 0 is complete: port-scan detection is active in the service and device-inventory alerts now
+flow through the normal persistence and notification pipeline.
 
 ## ✨ Highlights
 

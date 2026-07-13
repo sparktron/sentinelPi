@@ -5,14 +5,83 @@ _Created: 2026-06-10. Scope: full repository review of `src/`, `tests/`, `config
 
 ## Review Summary
 
-SentinelPi has a solid structure and a broad regression suite: 281 tests passed during this
-review. The highest-value work now is operational correctness for long-running deployments:
-make persisted baselines fully survive restarts, make `--check-config` actually reject invalid
-operator input, and finish graceful lifecycle handling for services that already have stop APIs.
+SentinelPi has a solid structure and a broad regression suite: 408 tests pass after the 2026-07-12
+Phase 0 fixes. Port-scan and device-inventory alert wiring is restored. The highest-value work now
+is making learning/response state restart-safe and ensuring every public configuration switch has
+a tested runtime effect.
 
 Severity legend: Critical means detection or shutdown correctness can be wrong in normal use.
 High means likely operator confusion, noisy detection, or degraded reliability. Medium means
 important hardening or usability work.
+
+## 2026-07-12 Repository-Wide Review Backlog
+
+The current review is documented in full in [`CODE_REVIEW.md`](CODE_REVIEW.md). Validation was
+green (405 tests, Ruff, mypy, and compileall), but service-level tracing found runtime gaps not
+covered by isolated component tests. Phase 0 was completed the same day and raised the suite to
+408 tests. This backlog supersedes the older completed phases for new work; historical items below
+remain as implementation history.
+
+### Phase 0: Restore Advertised Detection (Critical)
+
+- [x] Wire `PortScanDetector` into packet/flow routing and `/proc` fallback polling.
+- [x] Route `DeviceTracker` new-device, MAC/IP-change, and ARP-churn alerts through `AlertManager`.
+- [x] Add service-level wiring tests that exercise the real router/poller-to-alert-manager path and
+  inventory every advertised detector.
+
+Status: completed 2026-07-12. One shared port-scan detector now consumes both input paths, inventory
+polling uses the standard alert-manager dispatch wrapper, and three regressions cover the runtime
+inventory/dispatch wiring.
+
+### Phase 1: Restart And Response Correctness (High)
+
+- [ ] Persist learning completion/readiness so a restart does not trigger another full quiet period.
+- [ ] Implement `response.block_duration_seconds` with durable expiry and idempotent unblock, or
+  remove the unsupported option and document permanent blocks.
+- [ ] Persist responder plans, approvals, executions, results, and expirations; reconcile system
+  state after restart.
+- [ ] Treat an all-feed threat-intel refresh failure as watchdog failure and expose per-feed age.
+- [ ] Flush dirty baseline statistics during graceful shutdown.
+
+Exit criteria: mature baselines stay active across restart, timed blocks expire after restart, and
+response actions always have a durable audit record.
+
+### Phase 2: Configuration Truthfulness And Deployment Safety (High)
+
+- [ ] Make normal startup validate configuration; fail explicit missing/malformed configs closed;
+  reject unknown keys.
+- [ ] Define profile-versus-explicit-threshold precedence and test it.
+- [ ] Implement or remove the dead switches for DNS disable, active discovery, file integrity,
+  scheduled reports, and traffic-spike monitoring.
+- [ ] Split passive and active-response deployment capabilities; default to `NET_RAW` without
+  `NET_ADMIN`, and make the configured sinkhole target writable when that responder is enabled.
+- [ ] Add NetFlow exporter allowlisting, observation-domain-aware template caches, and cache limits.
+
+Exit criteria: every documented public option has a tested runtime effect, startup cannot silently
+fall back from an explicitly requested config, and default deployments use least privilege.
+
+### Phase 3: Resilience And Policy Consistency (Medium)
+
+- [ ] Exclude SYN-ACK/retransmit artifacts from connection-initiation signals.
+- [ ] Bound incident-correlator actor/cooldown maps.
+- [ ] Scope SQLite thread-local connections per `Database` instance/path.
+- [ ] Prevent active response when alert/action persistence fails and surface durable health state.
+- [ ] Make dashboard trust a locked, live, auditable policy that actually changes detector behavior.
+- [ ] Validate and size-limit collector payloads; return structured 4xx errors.
+
+Exit criteria: malformed or high-cardinality inputs remain bounded, trust behavior matches the UI,
+and no unpersisted alert can cause an armed response.
+
+### Feature Updates After Correctness Work
+
+- [ ] Runtime component registry/capability matrix shared by startup, preflight, status, and tests.
+- [ ] Per-detector baseline readiness, reset/freeze controls, and poisoning/staleness indicators.
+- [ ] Per-sensor/exporter credentials with identity binding and replay protection.
+- [ ] Sanitized PCAP/flow integration fixtures covering IPv6, UDP, SYN handshakes, and observation
+  domains.
+- [ ] Unified trust/whitelist/mute policy with expiry, audit history, preview, and undo.
+- [ ] Notification retry/delivery tracking and optional high-severity dead-letter storage.
+- [ ] Delivered daily/weekly reports with timezone/DST and missed-run handling.
 
 ## Findings To Fix
 
