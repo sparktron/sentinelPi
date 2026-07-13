@@ -168,6 +168,94 @@ def test_ingest_rejects_bad_body(collector):
     resp = client.post("/api/ingest", json={"sensor_id": "x"},  # no alert
                        headers={"X-SentinelPi-Collector-Key": "shared-key"})
     assert resp.status_code == 400
+    assert resp.get_json() == {
+        "ok": False,
+        "error": {
+            "code": "invalid_field",
+            "field": "alert",
+            "message": "must be a JSON object",
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("timestamp", "not-a-timestamp"),
+        ("confidence", "high"),
+        ("confidence", 1.1),
+        ("extra", []),
+        ("title", 123),
+        ("severity", "urgent"),
+        ("category", "unknown"),
+    ],
+)
+def test_ingest_returns_typed_errors_for_invalid_alert_fields(collector, field, value):
+    client, db = collector
+    payload = _payload()
+    payload["alert"][field] = value
+
+    resp = client.post(
+        "/api/ingest",
+        json=payload,
+        headers={"X-SentinelPi-Collector-Key": "shared-key"},
+    )
+
+    assert resp.status_code == 400
+    assert resp.get_json()["error"]["field"] == f"alert.{field}"
+    assert db.get_recent_alerts(limit=10) == []
+
+
+def test_ingest_rejects_oversized_strings_and_deep_extra(collector):
+    client, _ = collector
+    headers = {"X-SentinelPi-Collector-Key": "shared-key"}
+    oversized = _payload()
+    oversized["alert"]["title"] = "x" * 513
+    response = client.post("/api/ingest", json=oversized, headers=headers)
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"] == "alert.title"
+
+    deep = _payload()
+    deep["alert"]["extra"] = {"a": {"b": {"c": {"d": {"e": {"f": {"g": 1}}}}}}}
+    response = client.post("/api/ingest", json=deep, headers=headers)
+    assert response.status_code == 400
+    assert response.get_json()["error"]["field"].startswith("alert.extra")
+
+
+def test_ingest_rejects_invalid_json_and_content_type(collector):
+    client, _ = collector
+    headers = {"X-SentinelPi-Collector-Key": "shared-key"}
+    response = client.post(
+        "/api/ingest", data="{broken", content_type="application/json", headers=headers
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "invalid_json"
+
+    response = client.post("/api/ingest", data="plain text", headers=headers)
+    assert response.status_code == 415
+    assert response.get_json()["error"]["code"] == "unsupported_media_type"
+
+
+def test_ingest_enforces_configured_request_body_limit(
+    config, db, device_tracker, baseline, alert_manager
+):
+    from sentinelpi.ui.dashboard import FLASK_AVAILABLE, create_app
+
+    if not FLASK_AVAILABLE:
+        pytest.skip("Flask not installed")
+    config.cluster.collector_key = "shared-key"
+    config.cluster.ingest_max_payload_bytes = 256
+    app = create_app(config, db, device_tracker, baseline, alert_manager)
+    app.config.update(TESTING=True)
+
+    response = app.test_client().post(
+        "/api/ingest",
+        json=_payload(),
+        headers={"X-SentinelPi-Collector-Key": "shared-key"},
+    )
+
+    assert response.status_code == 413
+    assert response.get_json()["error"]["code"] == "payload_too_large"
 
 
 def test_ingest_absent_without_collector_key(config, db, device_tracker, baseline, alert_manager):

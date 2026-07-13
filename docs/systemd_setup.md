@@ -149,6 +149,7 @@ cluster:
 cluster:
   collector_key: "<shared-secret>"
   ingest_require_verified_header: true   # demands X-SentinelPi-Client-Verified: SUCCESS
+  ingest_max_payload_bytes: 65536        # hard limit before alert parsing
 ```
 
 **nginx** terminating mTLS and forwarding to the local collector (waitress on
@@ -173,7 +174,8 @@ server {
 
 With `ingest_require_verified_header: true`, the collector rejects (403) any
 request the proxy didn't mark `SUCCESS`, so the shared key alone can't be
-replayed without a valid client certificate.
+replayed without a valid client certificate. Authenticated requests that are malformed or exceed
+`ingest_max_payload_bytes` receive structured JSON 4xx responses and are not persisted.
 
 ## Troubleshooting
 

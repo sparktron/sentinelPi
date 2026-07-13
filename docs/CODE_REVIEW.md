@@ -1,7 +1,7 @@
 # SentinelPi Repository-Wide Code Review
 
 _Review date: 2026-07-12 · Scope: application code, tests, configuration, deployment,
-operator documentation, and packaging. Phase 2 completion validated 2026-07-12._
+operator documentation, and packaging. Phase 3 completion validated 2026-07-12._
 
 ## Executive Summary
 
@@ -27,7 +27,11 @@ threat-intelligence refresh health. The full suite now contains 418 tests.
 predictable, public monitoring switches are wired, default deployments use least privilege, and
 NetFlow/IPFIX ingest has bounded exporter/domain trust state. The full suite now contains 443 tests.
 
-The next most important work is Phase 3 resilience and policy consistency.
+**Phase 3 status (2026-07-12): resolved.** Connection signals and long-lived maps are bounded,
+database/persistence paths fail safely, device trust is live and auditable, and collector payloads
+are size- and schema-validated. The full suite now contains 469 tests.
+
+The next most important work is the feature backlog after the correctness phases.
 
 Severity legend: **Critical** = a core advertised security behavior is absent or bypassed in normal
 operation; **High** = material detection, response, security, or operator-trust failure;
@@ -301,8 +305,10 @@ after worker threads stop and before SQLite closes.
 **Issue:** `alert_from_dict()` directly casts confidence with `float()` and converts `extra` with
 `dict()`. Invalid authenticated collector payloads can raise instead of returning a structured 400.
 
-**Required fix:** validate collector payloads with bounded sizes and typed field errors before model
-construction. Reject invalid timestamps, confidence ranges, extra shapes, and oversized strings.
+**Implemented change:** collector requests have a configurable hard body limit and validate wrapper
+types, enums, ISO timestamps, confidence ranges, per-field string lengths, and bounded `extra`
+depth/item/value sizes before constructing an `Alert`. Malformed JSON, unsupported content types,
+oversized bodies, invalid fields, and authentication failures return structured JSON 4xx errors.
 
 #### L2. Logging setup is not idempotent
 

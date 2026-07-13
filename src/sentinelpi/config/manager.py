@@ -373,6 +373,7 @@ class ClusterConfig:
     # Collector side: require the fronting proxy to have verified the client cert
     # (proxy sets X-SentinelPi-Client-Verified: SUCCESS from $ssl_client_verify).
     ingest_require_verified_header: bool = False
+    ingest_max_payload_bytes: int = 65_536
 
 
 @dataclass
@@ -877,6 +878,7 @@ def validate_config(config: Config) -> List[ConfigIssue]:
     if config.cluster.role not in {"standalone", "sensor", "collector"}:
         add("cluster.role", "must be one of: standalone, sensor, collector")
     check_severity("cluster.forward_min_severity", config.cluster.forward_min_severity)
+    check_positive_int("cluster.ingest_max_payload_bytes", config.cluster.ingest_max_payload_bytes)
 
     check_non_negative_int("correlation.window_seconds", config.correlation.window_seconds)
     check_non_negative_int("correlation.min_sensors", config.correlation.min_sensors)

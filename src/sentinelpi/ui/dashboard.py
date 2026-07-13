@@ -112,6 +112,7 @@ def create_app(
     app = Flask(__name__, template_folder="templates")
     # Random per-process secret — never a hardcoded value (signs Flask sessions/flashes).
     app.config["SECRET_KEY"] = secrets.token_hex(32)
+    app.config["MAX_CONTENT_LENGTH"] = config.cluster.ingest_max_payload_bytes
     # Harden the login cookie. It carries only an "authenticated" flag (signed by
     # SECRET_KEY, so a client can't forge it), never the token itself.
     app.config.update(
@@ -360,9 +361,15 @@ def create_app(
     # sensors don't need a dashboard login. Active only when a key is configured.
     # ------------------------------------------------------------------
     if config.cluster.collector_key:
+        def _ingest_error(code: str, message: str, status: int, field: str = ""):
+            error = {"code": code, "message": message}
+            if field:
+                error["field"] = field
+            return jsonify({"ok": False, "error": error}), status
+
         @app.route("/api/ingest", methods=["POST"])
         def api_ingest():
-            from ..models import alert_from_dict
+            from ..cluster_validation import PayloadValidationError, parse_collector_payload
 
             # Optional mTLS: a fronting reverse proxy verifies the sensor's client
             # certificate and sets this header from $ssl_client_verify. Defense in
@@ -370,21 +377,40 @@ def create_app(
             if config.cluster.ingest_require_verified_header:
                 verified = request.headers.get("X-SentinelPi-Client-Verified", "")
                 if verified != "SUCCESS":
-                    abort(403)
+                    return _ingest_error(
+                        "client_certificate_required",
+                        "a proxy-verified client certificate is required",
+                        403,
+                    )
 
             provided = request.headers.get("X-SentinelPi-Collector-Key", "")
             if not hmac.compare_digest(provided, config.cluster.collector_key):
-                abort(401)
+                return _ingest_error("unauthorized", "invalid collector credentials", 401)
 
-            body = request.get_json(silent=True) or {}
-            alert_data = body.get("alert")
-            if not isinstance(alert_data, dict):
-                return jsonify({"error": "missing 'alert' object"}), 400
+            if not request.is_json:
+                return _ingest_error(
+                    "unsupported_media_type", "Content-Type must be application/json", 415
+                )
+            from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
-            alert = alert_from_dict(alert_data)
+            try:
+                body = request.get_json(silent=False)
+            except RequestEntityTooLarge:
+                return _ingest_error(
+                    "payload_too_large",
+                    f"request body exceeds {config.cluster.ingest_max_payload_bytes} bytes",
+                    413,
+                )
+            except BadRequest:
+                return _ingest_error("invalid_json", "request body is not valid JSON", 400)
+
+            try:
+                sensor_id, alert = parse_collector_payload(body)
+            except PayloadValidationError as exc:
+                return _ingest_error("invalid_field", exc.message, 400, exc.field)
             # Tag with the originating sensor so the collector can tell remote
             # alerts apart (and ForwardNotifier won't bounce them onward).
-            alert.extra["sensor"] = str(body.get("sensor_id", "") or "unknown")
+            alert.extra["sensor"] = sensor_id
             fired = alert_manager.process_one(alert)
             return jsonify({"ok": True, "fired": fired, "alert_id": alert.alert_id})
 

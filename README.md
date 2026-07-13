@@ -45,8 +45,9 @@ Phase 0 is complete: port-scan detection is active in the service and device-inv
 flow through the normal persistence and notification pipeline.
 Phase 1 is also complete: learned readiness, response approvals/history, timed firewall rollback,
 and threat-feed health now survive or reconcile across service restarts.
-Phase 3 resilience work is in progress: capture/correlation/database state is bounded and isolated,
-and alerts or active responses now fail closed when their audit records cannot be persisted.
+Phase 2 and Phase 3 are complete: configuration and deployment fail safely, runtime state and
+collector inputs are bounded, device trust is live/auditable, and unpersisted alerts cannot trigger
+active response.
 
 ## ✨ Highlights
 
@@ -237,7 +238,8 @@ Go beyond a single host:
 
 - **Multi-sensor mesh.** Run SentinelPi on several segments and forward alerts to a central collector
   over **mutual-TLS** (shared-key auth layered with reverse-proxy-verified client certs). The
-  collector runs every forwarded alert through the full pipeline, and the dashboard offers per-sensor views.
+  collector validates and size-limits every forwarded alert before running it through the full
+  pipeline, and the dashboard offers per-sensor views.
 - **Cross-sensor correlation.** One actor crossing multiple sensors or hitting multiple targets is
   escalated into a single `INCIDENT` instead of N scattered alerts.
 - **Router / firewall flow ingest.** Feed `conntrack`, **NetFlow v5/v9 / IPFIX**, and pfSense/OPNsense

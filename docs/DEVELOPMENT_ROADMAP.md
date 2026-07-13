@@ -5,10 +5,10 @@ _Created: 2026-06-10. Scope: full repository review of `src/`, `tests/`, `config
 
 ## Review Summary
 
-SentinelPi has a solid structure and a broad regression suite: 443 tests pass after the 2026-07-12
-Phase 0 through Phase 2 fixes. Runtime detector wiring, restart-safe learning/response state,
-configuration truthfulness, deployment least privilege, and bounded flow-ingest trust are now in
-place. The highest-value remaining work is Phase 3 resilience and policy consistency.
+SentinelPi has a solid structure and a broad regression suite: 469 tests pass after the 2026-07-12
+Phase 0 through Phase 3 fixes. Runtime detector wiring, restart-safe learning/response state,
+configuration truthfulness, deployment least privilege, bounded input state, persistence safety,
+and live trust policy are now in place. Remaining work is tracked in the feature backlog below.
 
 Severity legend: Critical means detection or shutdown correctness can be wrong in normal use.
 High means likely operator confusion, noisy detection, or degraded reliability. Medium means
@@ -22,8 +22,9 @@ covered by isolated component tests. Phase 0 was completed the same day and rais
 408 tests. Phase 1 then completed restart-safe learning, response persistence/expiration,
 threat-feed health, and final baseline flushing, raising the suite to 418 tests. Phase 2 then
 completed configuration/deployment safety, raising the suite to 443 tests. This
-backlog supersedes the older completed phases for new work; historical items below remain as
-implementation history.
+was followed by Phase 3 resilience, trust-policy, and collector validation work, raising the suite
+to 469 tests. This backlog supersedes the older completed phases for new work; historical items
+below remain as implementation history.
 
 ### Phase 0: Restore Advertised Detection (Critical)
 
@@ -81,12 +82,12 @@ Full validation passes with 443 tests, Ruff, mypy, compileall, and the sample co
 - [x] Scope SQLite thread-local connections per `Database` instance/path.
 - [x] Prevent active response when alert/action persistence fails and surface durable health state.
 - [x] Make dashboard trust a locked, live, auditable policy that actually changes detector behavior.
-- [ ] Validate and size-limit collector payloads; return structured 4xx errors.
+- [x] Validate and size-limit collector payloads; return structured 4xx errors.
 
 Exit criteria: malformed or high-cardinality inputs remain bounded, trust behavior matches the UI,
 and no unpersisted alert can cause an armed response.
 
-Status: in progress 2026-07-12. Passive capture now admits only SYN-without-ACK initiations and
+Status: completed 2026-07-12. Passive capture now admits only SYN-without-ACK initiations and
 collapses retransmitted 5-tuples for 60 seconds with a bounded cache. Correlation now expires empty
 actor/cooldown state, enforces a configurable LRU actor ceiling, and reports eviction metrics.
 SQLite thread-local connection state is now owned by each `Database` instance, so independent paths
@@ -97,6 +98,11 @@ degraded/recovered health through the status payload and critical logs.
 Dashboard trust/untrust now goes through the tracker's locked live policy, persists by device MAC,
 and appends actor/timestamp audit history. Trusted devices suppress only new-device and
 low-confidence learned-behavior alerts; security and reputation detections remain active.
+Collector ingest now enforces a configurable request-body ceiling before model construction,
+validates enums, timestamps, confidence, strings, and bounded `extra` structures, and returns typed
+JSON errors for malformed, unsupported, oversized, or unauthorized requests.
+Full validation passes with 469 tests, Ruff across `src` and `tests`, mypy across all 64 source
+files, compileall, and the shipped configuration check.
 
 ### Feature Updates After Correctness Work
 

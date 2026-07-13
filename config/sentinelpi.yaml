@@ -407,6 +407,7 @@ cluster:
   tls_ca_cert: ""             # sensor: CA bundle to verify the collector's cert
   tls_verify: true            # sensor: set false only for self-signed testing
   ingest_require_verified_header: false  # collector: require proxy-verified client cert
+  ingest_max_payload_bytes: 65536        # collector: hard request-body limit
 
 # =============================================================================
 # CORRELATION  (Phase 3 — turn alert noise into incidents)

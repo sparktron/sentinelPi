@@ -65,6 +65,13 @@ def test_validate_config_requires_netflow_exporter_allowlist():
     assert "flow.netflow_allowed_exporters" not in _issue_paths(config)
 
 
+def test_validate_config_requires_positive_collector_payload_limit():
+    config = Config()
+    config.cluster.ingest_max_payload_bytes = 0
+
+    assert "cluster.ingest_max_payload_bytes" in _issue_paths(config)
+
+
 def test_validate_config_rejects_invalid_siem_settings():
     config = Config()
     n = config.notifications
