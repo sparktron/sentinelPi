@@ -272,7 +272,8 @@ unknown YAML keys are fatal instead of silently falling back to defaults.
 | `flow` | conntrack / NetFlow / IPFIX / filterlog ingestion |
 
 **Sensitivity profiles** (`monitoring.sensitivity_profile`): `conservative`, `balanced`, or
-`aggressive` — a one-word dial that sets sane defaults across every detector.
+`aggressive` — a one-word dial that sets sane defaults across every detector. Explicit values in
+`thresholds` take precedence over the selected profile, so individual signals can be tuned.
 
 **Validate before you run:**
 ```bash

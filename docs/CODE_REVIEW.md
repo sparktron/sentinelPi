@@ -179,7 +179,7 @@ no config was requested, unknown keys report full paths, and normal startup vali
 subsystem or logging side effects. Typo, missing-file, malformed-file, and normal-startup
 regressions cover the boundary.
 
-#### M2. Sensitivity profiles overwrite explicit threshold values
+#### M2. Sensitivity profiles overwrite explicit threshold values — Resolved
 
 **Issue:** after YAML merge, conservative/aggressive profiles hard-set six thresholds. Operators
 cannot use a profile and then override one threshold, despite the sample config saying thresholds
@@ -188,9 +188,9 @@ can be overridden.
 **Evidence:** `src/sentinelpi/config/manager.py:530-561` and the threshold comments in
 `config/sentinelpi.yaml`.
 
-**Required fix:** define precedence explicitly. A practical rule is defaults -> profile values ->
-explicit YAML threshold overrides. Preserve the raw threshold mapping during load and apply it last;
-add precedence tests.
+**Implemented change:** configuration loading now applies defaults -> profile values -> explicit
+YAML threshold overrides. Regressions prove an explicit value wins while unspecified thresholds
+retain the selected profile, and the precedence is documented in the README.
 
 #### M3. SYN-ACK packets are treated as connection initiations
 

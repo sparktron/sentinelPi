@@ -548,7 +548,17 @@ def load_config(path: Optional[str] = None) -> Config:
             config.trusted_devices = _load_trusted_devices(raw["trusted_devices"])
             raw = {key: value for key, value in raw.items() if key != "trusted_devices"}
 
-        _merge_dataclass_from_dict(config, raw)
+        explicit_thresholds = raw.get("thresholds")
+        raw_without_thresholds = {key: value for key, value in raw.items() if key != "thresholds"}
+        _merge_dataclass_from_dict(config, raw_without_thresholds)
+
+        # Precedence is defaults -> sensitivity profile -> explicit thresholds.
+        # This lets operators select a broad profile and tune individual values.
+        _apply_sensitivity_profile(config)
+        if explicit_thresholds is not None:
+            if not isinstance(explicit_thresholds, dict):
+                raise ConfigError("thresholds: must be a mapping")
+            _merge_dataclass_from_dict(config.thresholds, explicit_thresholds, "thresholds")
         config._source_path = str(candidate)
         logger.info("Loaded config from %s", candidate)
 
@@ -556,9 +566,6 @@ def load_config(path: Optional[str] = None) -> Config:
         raise ConfigError(f"failed to parse configuration file {candidate}: {exc}") from exc
     except OSError as exc:
         raise ConfigError(f"failed to read configuration file {candidate}: {exc}") from exc
-
-    # Apply sensitivity profile multipliers
-    _apply_sensitivity_profile(config)
 
     return config
 

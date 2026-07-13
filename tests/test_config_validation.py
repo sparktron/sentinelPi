@@ -204,6 +204,36 @@ def test_load_config_rejects_unknown_keys(tmp_path, yaml_text, unknown_path):
         load_config(str(config_path))
 
 
+def test_explicit_thresholds_override_profile_values(tmp_path):
+    config_path = tmp_path / "profile.yaml"
+    config_path.write_text(
+        "monitoring:\n"
+        "  sensitivity_profile: aggressive\n"
+        "thresholds:\n"
+        "  port_scan_ports_per_minute: 12\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.thresholds.port_scan_ports_per_minute == 12
+    assert config.thresholds.connection_spike_factor == 2.0
+    assert config.thresholds.ssh_failures_threshold == 5
+
+
+def test_profile_values_apply_when_thresholds_are_not_explicit(tmp_path):
+    config_path = tmp_path / "profile.yaml"
+    config_path.write_text(
+        "monitoring:\n  sensitivity_profile: conservative\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.thresholds.port_scan_ports_per_minute == 30
+    assert config.thresholds.lateral_movement_dest_threshold == 10
+
+
 def test_normal_startup_rejects_invalid_config_before_initialization(tmp_path):
     config_path = tmp_path / "invalid.yaml"
     config_path.write_text("dashboard:\n  port: nope\n", encoding="utf-8")
