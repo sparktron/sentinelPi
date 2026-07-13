@@ -31,7 +31,7 @@ sudo chown sentinelpi:sentinelpi /opt/sentinelpi /var/lib/sentinelpi /var/log/se
 ### 3. Set up the virtual environment
 
 ```bash
-sudo -u sentinelpi python3.11 -m venv /opt/sentinelpi/venv
+sudo -u sentinelpi python3 -m venv /opt/sentinelpi/venv
 sudo cp -r src/sentinelpi /opt/sentinelpi/
 sudo cp requirements.txt /opt/sentinelpi/
 sudo -u sentinelpi /opt/sentinelpi/venv/bin/pip install -r /opt/sentinelpi/requirements.txt

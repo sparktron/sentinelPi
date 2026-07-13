@@ -49,7 +49,9 @@ SentinelPi **cannot** detect:
 - **Physical access attacks** — No physical security monitoring.
 - **Advanced persistent threats** — Sophisticated APTs that carefully mimic normal traffic patterns may evade behavioral detection.
 - **Zero-day exploits** — No signature database for vulnerability exploitation.
-- **Encrypted DNS (DoH/DoT)** — DNS monitoring only works for plaintext DNS (port 53).
+- **Encrypted DNS contents (DoH/DoT)** — plaintext DNS inspection works only on port 53. SentinelPi
+  can flag connections to known DoH resolvers and TCP/853, but it cannot inspect encrypted query
+  names or identify every custom encrypted resolver.
 
 ## Assumptions
 

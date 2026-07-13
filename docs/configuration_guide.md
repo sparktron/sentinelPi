@@ -34,7 +34,9 @@ Find gateway MAC: `arp -n | grep <gateway_ip>`
 
 ### Trusted Devices
 
-Trusted devices suppress new-device alerts:
+Trusted devices suppress new-device and low-confidence learned-behavior alerts. Security and
+reputation detections such as ARP spoofing, port scans, threat-intelligence hits, and suspicious ASN
+matches remain active:
 
 ```yaml
 trusted_devices:
@@ -83,7 +85,8 @@ minute for traffic-spike baselining.
 
 Daily and weekly reports run after `reporting.daily_report_hour` in the host's local timezone and
 are routed through the normal alert pipeline. The last delivered period is persisted so restarting
-the service does not duplicate a report.
+the service does not duplicate a report. Explicit timezone/DST selection, missed-run recovery, and
+per-channel delivery tracking remain planned work.
 
 `active_hours_detection_enabled` learns when each host is normally active.
 `host_profile_detection_enabled` learns each host's usual destination ports,

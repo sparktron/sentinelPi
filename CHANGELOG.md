@@ -5,6 +5,34 @@ All notable changes to SentinelPi are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Shared runtime component registry covering inputs, inventory, detectors, notifiers, responders,
+  and services. It drives event/poll routing and exposes configured, started, degraded, stopped,
+  and activity state through preflight and `/api/status`.
+- Service-level wiring and lifecycle regressions; the suite now contains 476 tests.
+
+### Changed
+
+- Normal startup validates explicit configuration before subsystem initialization, documented
+  monitoring switches have runtime effects, and default deployments grant only passive-capture
+  privileges unless the active-response override is selected.
+- Baseline, response, trust-policy, timed-firewall, and threat-feed health state now survives or
+  reconciles cleanly across restarts where applicable.
+
+### Fixed
+
+- Port-scan and inventory alerts are wired through the production service paths.
+- Untrusted or malformed collector/flow input is bounded and rejected before it can grow runtime
+  state or construct invalid alerts.
+- Persistence failures stop alert dispatch and active response before unaudited side effects.
+- SYN-ACK/retransmit artifacts, unbounded correlation maps, cross-database thread-local reuse, and
+  stale device-trust snapshots no longer distort detection or runtime state.
+- Repeated logging setup replaces and closes only SentinelPi-owned handlers instead of duplicating
+  output or disturbing host-process handlers.
+
 ## [1.0.0] - 2026-06-29
 
 First stable release: a lightweight, whole-network defensive anomaly monitor for
@@ -68,3 +96,4 @@ Raspberry Pi.
   `dumpcap`-only environment the daemon will not use.
 
 [1.0.0]: https://github.com/sparktron/sentinelPi/releases/tag/v1.0.0
+[Unreleased]: https://github.com/sparktron/sentinelPi/compare/v1.0.0...HEAD

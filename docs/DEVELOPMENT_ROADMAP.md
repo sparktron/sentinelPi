@@ -1,14 +1,15 @@
 # SentinelPi Development Roadmap
 
-_Created: 2026-06-10. Scope: full repository review of `src/`, `tests/`, `config/`,
-`.github/`, and operator docs._
+_Created: 2026-06-10 · Updated: 2026-07-13. Scope: full repository review of `src/`, `tests/`,
+`config/`, `.github/`, and operator docs._
 
 ## Review Summary
 
-SentinelPi has a solid structure and a broad regression suite: 469 tests pass after the 2026-07-12
-Phase 0 through Phase 3 fixes. Runtime detector wiring, restart-safe learning/response state,
-configuration truthfulness, deployment least privilege, bounded input state, persistence safety,
-and live trust policy are now in place. Remaining work is tracked in the feature backlog below.
+SentinelPi has a solid structure and a broad regression suite: 476 tests pass after the 2026-07-12
+corrective phases and the 2026-07-13 closeout. Runtime detector wiring, restart-safe
+learning/response state, configuration truthfulness, deployment least privilege, bounded input
+state, persistence safety, live trust policy, idempotent logging, and runtime capability reporting
+are in place. All review findings are resolved; remaining work is the Phase 4 feature backlog below.
 
 Severity legend: Critical means detection or shutdown correctness can be wrong in normal use.
 High means likely operator confusion, noisy detection, or degraded reliability. Medium means
@@ -23,8 +24,9 @@ covered by isolated component tests. Phase 0 was completed the same day and rais
 threat-feed health, and final baseline flushing, raising the suite to 418 tests. Phase 2 then
 completed configuration/deployment safety, raising the suite to 443 tests. This
 was followed by Phase 3 resilience, trust-policy, and collector validation work, raising the suite
-to 469 tests. This backlog supersedes the older completed phases for new work; historical items
-below remain as implementation history.
+to 469 tests. The runtime capability registry and final logging correction raised the suite to 476
+tests on 2026-07-13. This backlog supersedes the older completed phases for new work; historical
+items below remain as implementation history.
 
 ### Phase 0: Restore Advertised Detection (Critical)
 
@@ -320,7 +322,7 @@ A 2026-06-29 follow-up review opened a small corrective backlog below.
    - Keep coverage informational until thresholds are stable.
 
    Status update: compileall, ruff, mypy, and coverage XML are now wired into CI (2026-06-10 —
-   mypy passes clean on all source files with stubs + `[tool.mypy]` config). ✅ Packaging smoke
+   mypy checks the configured `src/` scope cleanly with stubs + `[tool.mypy]` config). ✅ Packaging smoke
    test added (2026-06-17): a `package` CI job builds the sdist+wheel and installs the wheel into a
    clean venv, then runs the console entry point and verifies the bundled dashboard templates ship
    in the wheel — which surfaced and fixed a real packaging bug (templates were absent from the
@@ -481,15 +483,13 @@ Exit criteria:
 
 ## Future Directions
 
-The original roadmap items above are shipped; these are candidate next steps beyond that review,
-not yet started. They are infrastructure/operations work rather than detection features. The
-2026-06-29 follow-up review items are tracked separately above.
+The original roadmap items above are shipped. This section records infrastructure/operations work
+that followed the review; completed items remain as history, and any unchecked items are candidates
+rather than active Phase 4 commitments.
 
-- **Tag a v1.0.0 release.** `pyproject` is already at `1.0.0`, the wheel builds and installs cleanly
-  (packaging smoke test is green in CI), and `master` is healthy. Cut an annotated `v1.0.0` tag and a
-  GitHub release with a changelog generated from git history, and attach the built sdist/wheel.
-  Establish a lightweight release process (e.g. a tag-triggered CI job that builds and publishes the
-  artifacts) for subsequent versions.
+- ✅ **Tag a v1.0.0 release.** _Shipped 2026-06-29/30: `v1.0.0` is tagged and published as the first
+  stable GitHub release. A tag-triggered artifact publication workflow remains a possible release
+  automation improvement for later versions._
 - ✅ **Enforce a test-coverage gate.** _Shipped (2026-06-17): `[tool.coverage.report] fail_under = 70`
   in `pyproject.toml` makes any coverage run (CI, or local `pytest --cov`) fail below 70% total —
   ~3-4 points under the current ~74% line coverage to absorb run-to-run variance. The existing CI
@@ -504,12 +504,11 @@ not yet started. They are infrastructure/operations work rather than detection f
   builds, runs as non-root, `--check-config`/`--version` work, and the daemon boots with the dashboard
   serving (auth enforced). README documents both paths._
 
-## Validation Performed
+## Historical Validation Record
 
-- `python -m pytest -q` passed: 292 tests after the Phase 1/early Phase 2 fixes.
-- Manual invalid-config check proved `--check-config` currently accepts invalid values.
+- `python -m pytest -q` passed 292 tests after the original Phase 1/early Phase 2 fixes.
+- At that checkpoint, a manual invalid-config check exposed the since-fixed `--check-config` issue.
 - Static review covered core runtime modules, tests, CI, sample config, README, and existing docs.
 
-Note: local validation used Python 3.10.12 from the current shell, while `pyproject.toml` declares
-Python 3.11+. CI already covers Python 3.11 and 3.12, so follow-up implementation should validate on
-one of the supported runtimes too.
+Current validation is recorded in the active Phase 4 status above. The project requires Python
+3.10 or newer, and CI covers Python 3.10, 3.11, and 3.12.

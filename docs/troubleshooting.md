@@ -56,6 +56,8 @@ Two solutions:
 3. **Enable packet capture** (`packet_capture_enabled: true`) for better coverage
 4. **Check baseline learning** — detectors are less sensitive during the learning phase
 5. **Verify the interface** — make sure the correct network interface is configured
+6. **Run the preflight** — `sentinelpi --check` reports configured/disabled components and probes
+   enabled integrations; `/api/status` exposes each component's live lifecycle and activity state
 
 ### High CPU usage on Raspberry Pi
 

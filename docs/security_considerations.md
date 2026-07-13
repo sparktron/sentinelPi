@@ -2,12 +2,18 @@
 
 ## What SentinelPi Is
 
-SentinelPi is a **passive, defensive monitoring tool** for small networks. It observes traffic metadata and system logs to detect anomalies. It is not an intrusion prevention system (IPS), firewall, or antivirus.
+SentinelPi is a **defensive monitoring tool** for small networks. It passively observes traffic
+metadata and system logs by default. An optional, explicitly armed active-response layer can ask the
+host firewall, DNS resolver, or ARP table to contain a detected threat; it is dry-run and
+human-approval gated by default. SentinelPi is not an inline intrusion prevention system, a
+replacement firewall, or antivirus.
 
 ## What SentinelPi Is NOT
 
-- **Not an IPS** — It does not block, drop, or modify traffic
-- **Not a firewall** — It does not control access
+- **Not an inline IPS** — It does not sit in the forwarding path; optional responders issue narrow,
+  auditable actions through host tools
+- **Not a replacement firewall** — It can add approved quarantine rules but does not define the
+  network's general access-control policy
 - **Not an antivirus** — It does not scan files for malware signatures
 - **Not a SIEM** — It is a lightweight local tool, not an enterprise log aggregator
 - **Not offensive tooling** — It contains no exploitation, injection, or attack capabilities
@@ -20,18 +26,20 @@ SentinelPi introduces the following attack surface:
 
 | Component | Risk | Mitigation |
 |-----------|------|------------|
-| Flask dashboard | HTTP service on localhost | Binds to 127.0.0.1 by default; optional token auth |
+| Flask dashboard | HTTP service on localhost | Binds to 127.0.0.1 by default; token/session auth is always required |
 | SQLite database | Contains network metadata | File permissions 640, owned by sentinelpi user |
 | Packet capture | Requires CAP_NET_RAW | Granted via setcap, not by running as root |
 | Firewall / ARP response | Requires CAP_NET_ADMIN | Excluded by default; explicit deployment override |
-| Config file | May contain webhook secrets | File permissions 640, owned by root:sentinelpi |
+| Config file | May contain notification, collector, and TLS secrets | File permissions 640, owned by root:sentinelpi |
 | Auth log access | Reads sensitive system logs | sentinelpi user added to adm group (read-only) |
 
 ### Hardening Recommendations
 
 1. **Keep the dashboard on localhost.** Do not expose it to the network unless absolutely necessary. Use SSH tunnels for remote access.
 
-2. **Set a dashboard access token** if exposing the dashboard beyond localhost.
+2. **Set a stable dashboard access token.** Authentication is always required; if the setting is
+   empty, SentinelPi generates a random token for that process. A configured token is especially
+   important when the dashboard is exposed beyond localhost.
 
 3. **Do not run as root.** The install script creates a dedicated system user with minimal privileges. Only CAP_NET_RAW is granted by default; add CAP_NET_ADMIN only while firewall/ARP response is armed.
 
@@ -57,7 +65,8 @@ SentinelPi cannot inspect encrypted payloads. It sees:
 
 It does NOT see:
 - HTTPS content
-- DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT) queries
+- DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT) query contents; it can only flag metadata such as
+  connections to known DoH resolvers or TCP port 853
 - VPN tunnel contents
 - SSH session contents
 
@@ -76,7 +85,7 @@ A sophisticated attacker aware of SentinelPi could evade detection by:
 - Using encrypted channels (VPN, SSH tunnels)
 - Randomizing beacon intervals significantly
 - Spoofing MAC addresses to match trusted devices
-- Using DNS-over-HTTPS instead of plaintext DNS
+- Using an encrypted resolver or tunnel that is not covered by the configured metadata heuristics
 - Staying below alert thresholds
 - Operating during quiet hours (only non-critical alerts are suppressed)
 
@@ -108,7 +117,9 @@ SentinelPi collects and stores:
 - Auth log entries (usernames, source IPs of SSH attempts)
 - Network traffic volume statistics
 
-This data is stored locally in SQLite and log files. It is never transmitted externally unless you configure webhook or email notifications.
+This data is stored locally in SQLite and log files. Alerts leave the host only through explicitly
+configured channels such as email, webhook, ntfy, SMS, SIEM/OTLP export, or sensor-to-collector
+forwarding.
 
 **Retention:** Configurable (default 30 days). Older records are automatically purged.
 

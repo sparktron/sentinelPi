@@ -6,7 +6,7 @@
 
 > *It learns what "normal" looks like — then tells you, in plain English, the moment something doesn't fit.*
 
-[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%7C%20Linux-C51A4A?logo=raspberrypi&logoColor=white)](#-requirements)
 [![Release](https://img.shields.io/badge/release-v1.0.0-success.svg)](https://github.com/sparktron/sentinelPi/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -38,20 +38,12 @@ step** — not a wall of packets.
 It runs for months on a Pi, works **without root**, stays **quiet** (no alert floods), and can even
 **act** on the worst threats once you trust it to.
 
-The latest repository-wide review is in [docs/CODE_REVIEW.md](docs/CODE_REVIEW.md), with its
-prioritized implementation backlog tracked in
-[docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).
-Phase 0 is complete: port-scan detection is active in the service and device-inventory alerts now
-flow through the normal persistence and notification pipeline.
-Phase 1 is also complete: learned readiness, response approvals/history, timed firewall rollback,
-and threat-feed health now survive or reconcile across service restarts.
-Phase 2 and Phase 3 are complete: configuration and deployment fail safely, runtime state and
-collector inputs are bounded, device trust is live/auditable, and unpersisted alerts cannot trigger
-active response.
-Phase 4 is underway with a shared runtime component matrix that drives detector routing and polling,
-preflight visibility, and `/api/status` state/activity reporting.
-All corrective findings from the repository-wide review are now resolved, including safe repeated
-logging initialization without duplicate console or file handlers.
+**Current repository state (2026-07-13):** version metadata remains `1.0.0`; all corrective findings
+from the latest [repository-wide review](docs/CODE_REVIEW.md) are resolved, and the regression suite
+contains 476 tests. Phase 4 feature work is underway: its first checkpoint shipped a shared runtime
+component matrix that drives event/poll routing and exposes lifecycle/activity through preflight and
+`/api/status`. Remaining feature work is tracked in the
+[development roadmap](docs/DEVELOPMENT_ROADMAP.md).
 
 ## ✨ Highlights
 
@@ -408,6 +400,7 @@ python -m pytest tests/ -v
 # Local CI checks
 python -m compileall -q src tests
 ruff check src tests
+mypy
 
 # Coverage (CI fails below the fail_under floor in pyproject.toml — currently 70%)
 python -m pytest tests/ --cov=sentinelpi --cov-report=term-missing
@@ -417,8 +410,8 @@ Fixtures simulate real attack traffic so detectors are tested end-to-end: normal
 port scans (100+ ports in 30s), beaconing malware (regular 60s intervals), ARP spoofing (gateway MAC
 change), SSH brute force (50 failures in 100s), DNS tunneling, and DGA NXDOMAIN floods.
 
-CI runs on Python 3.11 + 3.12: compile checks, ruff, mypy, coverage, and a packaging smoke test that
-builds and installs the wheel.
+CI runs on Python 3.10, 3.11, and 3.12: compile checks, ruff, mypy, coverage, and a
+packaging smoke test that builds and installs the wheel.
 
 </details>
 
@@ -468,7 +461,7 @@ the `cap_add` block. If firewall or ARP active response is deliberately armed, a
 ## 📋 Requirements
 
 - Raspberry Pi 4 or newer (or any Debian-based Linux host)
-- Python **3.11+**
+- Python **3.10+**
 - A network interface on the subnet you want to watch
 - Root or `CAP_NET_RAW` for packet capture — **optional**; `/proc` polling and flow ingest work
   without elevated privileges
