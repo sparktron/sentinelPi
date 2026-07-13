@@ -446,10 +446,11 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Compose uses **host networking** plus `NET_RAW`/`NET_ADMIN` so the container can capture LAN traffic
-without root. The database and baselines persist in named volumes. For a capability-free,
-`/proc`-only deployment, set `monitoring.packet_capture_enabled: false` and drop the `cap_add` block.
-The image ships a `HEALTHCHECK` that runs `--check-config`.
+Compose uses **host networking** plus `NET_RAW` so the container can capture LAN traffic without
+root; `NET_ADMIN` is excluded by default. The database and baselines persist in named volumes. For
+a capability-free, `/proc`-only deployment, set `monitoring.packet_capture_enabled: false` and drop
+the `cap_add` block. If firewall or ARP active response is deliberately armed, add the explicit
+`docker-compose.response.yml` override. The image ships a `HEALTHCHECK` that runs `--check-config`.
 
 </details>
 

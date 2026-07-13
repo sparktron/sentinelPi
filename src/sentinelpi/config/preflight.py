@@ -96,6 +96,13 @@ def _check_environment(config) -> List[CheckResult]:
         else:
             results.append(CheckResult(name, "warn", f"'{binary}' not on PATH — {purpose}"))
 
+    def need_writable_path(name: str, path: str, purpose: str) -> None:
+        target = path if os.path.exists(path) else os.path.dirname(path) or "."
+        if os.path.exists(target) and os.access(target, os.W_OK):
+            results.append(CheckResult(name, "ok", f"writable target {path}"))
+        else:
+            results.append(CheckResult(name, "warn", f"not writable: {path} — {purpose}"))
+
     # Detection inputs (optional data files / libraries).
     if m.geo_enabled:
         need_file("env:geoip-country", m.geo_db_path, "new-country detection disabled")
@@ -138,7 +145,11 @@ def _check_environment(config) -> List[CheckResult]:
             elif backend == "unbound":
                 need_binary("env:dns-sinkhole", "unbound-control", "DNS sinkholing will fail")
             else:  # hosts file
-                need_file("env:dns-sinkhole", "/etc/hosts", "DNS sinkholing will fail")
+                need_writable_path(
+                    "env:dns-sinkhole",
+                    rc.dns_sinkhole_hosts_file,
+                    "hosts-file DNS sinkholing will fail",
+                )
 
     if not results:
         return [CheckResult("environment", "skip", "no file/binary-dependent features enabled")]

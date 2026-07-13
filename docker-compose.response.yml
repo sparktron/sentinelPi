@@ -1,0 +1,7 @@
+# Explicit opt-in capability override for firewall/ARP active response.
+# Use only with response.enabled configured and reviewed:
+#   docker compose -f docker-compose.yml -f docker-compose.response.yml up -d --build
+services:
+  sentinelpi:
+    cap_add:
+      - NET_ADMIN

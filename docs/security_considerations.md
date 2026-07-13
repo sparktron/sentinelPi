@@ -23,6 +23,7 @@ SentinelPi introduces the following attack surface:
 | Flask dashboard | HTTP service on localhost | Binds to 127.0.0.1 by default; optional token auth |
 | SQLite database | Contains network metadata | File permissions 640, owned by sentinelpi user |
 | Packet capture | Requires CAP_NET_RAW | Granted via setcap, not by running as root |
+| Firewall / ARP response | Requires CAP_NET_ADMIN | Excluded by default; explicit deployment override |
 | Config file | May contain webhook secrets | File permissions 640, owned by root:sentinelpi |
 | Auth log access | Reads sensitive system logs | sentinelpi user added to adm group (read-only) |
 
@@ -32,7 +33,7 @@ SentinelPi introduces the following attack surface:
 
 2. **Set a dashboard access token** if exposing the dashboard beyond localhost.
 
-3. **Do not run as root.** The install script creates a dedicated system user with minimal privileges. Only CAP_NET_RAW is granted.
+3. **Do not run as root.** The install script creates a dedicated system user with minimal privileges. Only CAP_NET_RAW is granted by default; add CAP_NET_ADMIN only while firewall/ARP response is armed.
 
 4. **Protect the config file.** It may contain email passwords or webhook secrets. Default permissions are 640 (owner: root, group: sentinelpi).
 

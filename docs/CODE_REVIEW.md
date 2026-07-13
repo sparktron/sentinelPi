@@ -126,7 +126,7 @@ feeds bounded ARP sweeps through inventory; file-integrity polling hashes config
 daily/weekly report periods are restart-safe; and interface byte counters drive traffic-spike
 baselines. Unit and service-wiring regressions cover each runtime path.
 
-#### H5. Default deployments grant more network privilege than passive capture needs
+#### H5. Default deployments grant more network privilege than passive capture needs — Resolved
 
 **Issue:** the systemd unit and Docker Compose grant `CAP_NET_ADMIN` unconditionally even though
 passive packet capture only needs `CAP_NET_RAW` and active response is disabled by default.
@@ -142,10 +142,10 @@ file-backed responder.
 `docker-compose.yml`, and default `response.dns_sinkhole_hosts_file` in
 `src/sentinelpi/config/manager.py:324-327`.
 
-**Required fix:** ship passive and response-enabled deployment profiles. Default to `NET_RAW` only;
-add `NET_ADMIN` explicitly when firewall/ARP response is armed. Put sinkhole state in an allowed
-writable location or add the precise path to `ReadWritePaths`. Extend preflight to verify the actual
-configured sinkhole target is writable under the service model.
+**Implemented change:** default systemd and Compose manifests grant `NET_RAW` only. Explicit
+systemd/Compose active-response overrides add `NET_ADMIN`. The default hosts-file sinkhole now lives
+under `/var/lib/sentinelpi`, and preflight verifies the configured target (or its parent) is
+writable. Static manifest and preflight regressions cover the boundary.
 
 #### H6. NetFlow/IPFIX ingestion has no exporter trust boundary
 

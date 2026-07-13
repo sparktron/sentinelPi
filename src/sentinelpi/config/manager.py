@@ -325,7 +325,7 @@ class ResponseConfig:
     # DNS sinkhole responder (domain-level block; per-action opt-in).
     dns_sinkhole_enabled: bool = False
     dns_sinkhole_backend: str = "hosts"         # "hosts" | "pihole" | "unbound"
-    dns_sinkhole_hosts_file: str = "/etc/sentinelpi/sinkhole.hosts"
+    dns_sinkhole_hosts_file: str = "/var/lib/sentinelpi/sinkhole.hosts"
     sinkhole_categories: List[str] = field(default_factory=lambda: ["threat_intel", "dns_anomaly"])
     sinkhole_min_severity: str = "high"
 

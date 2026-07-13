@@ -1,9 +1,10 @@
 # SentinelPi via Docker Compose.
 #
-# Host networking + NET_RAW/NET_ADMIN let the (non-root) process see and capture
-# LAN traffic, mirroring the systemd install. Drop the caps and set
+# Host networking + NET_RAW let the (non-root) process see and capture
+# LAN traffic, mirroring the passive systemd install. Drop the cap and set
 # `monitoring.packet_capture_enabled: false` in your config for a /proc-only,
-# capability-free deployment.
+# capability-free deployment. Active response additionally needs the explicit
+# docker-compose.response.yml override.
 #
 #   docker compose up -d --build
 #   docker compose logs -f
@@ -20,10 +21,9 @@ services:
     # Required to observe the host LAN (ARP, packet capture, /proc/net).
     network_mode: host
 
-    # Packet capture without running as root. Remove both lines for /proc-only.
+    # Passive packet capture without running as root. Remove for /proc-only.
     cap_add:
       - NET_RAW
-      - NET_ADMIN
 
     volumes:
       # Your config (override the baked-in default).

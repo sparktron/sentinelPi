@@ -3,9 +3,10 @@
 # =============================================================================
 # Multi-stage build: compile a wheel, then install it into a slim runtime image
 # that runs as a non-root user. For packet capture, start the container with
-# `--cap-add NET_RAW --cap-add NET_ADMIN` and host networking (see
-# docker-compose.yml / the README): Docker grants those capabilities directly to
-# the non-root process, so it never needs to run as root. Without them the app
+# `--cap-add NET_RAW` and host networking (see docker-compose.yml / the README):
+# Docker grants that capability directly to the non-root process, so it never
+# needs to run as root. NET_ADMIN is an explicit active-response opt-in. Without
+# NET_RAW the app
 # falls back to /proc polling. (No file capabilities are baked in — a file cap
 # outside the container's bounding set would block exec on a plain `docker run`.)
 # -----------------------------------------------------------------------------

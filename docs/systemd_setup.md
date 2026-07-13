@@ -110,6 +110,20 @@ The service file includes systemd security features:
 - `SystemCallFilter=@system-service` — Restricted system calls
 - `ReadWritePaths=` — Only `/var/lib/sentinelpi` and `/var/log/sentinelpi` are writable
 
+The default service grants only `CAP_NET_RAW` for passive capture. If you deliberately arm the
+firewall or ARP responders, install the reviewed active-response drop-in to add `CAP_NET_ADMIN`:
+
+```bash
+sudo install -d /etc/systemd/system/sentinelpi.service.d
+sudo install -m 644 systemd/active-response.conf \
+  /etc/systemd/system/sentinelpi.service.d/active-response.conf
+sudo systemctl daemon-reload
+sudo systemctl restart sentinelpi
+```
+
+Remove that drop-in when active response is disabled. The default hosts-file sinkhole writes to
+`/var/lib/sentinelpi/sinkhole.hosts`, which is already inside `ReadWritePaths`.
+
 ## mTLS for the sensor → collector link (Phase 3)
 
 In a multi-host deployment, sensors forward alerts to a collector's

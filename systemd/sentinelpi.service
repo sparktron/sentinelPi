@@ -16,8 +16,8 @@ Group=sentinelpi
 # Packet capture requires CAP_NET_RAW; granted to the venv python binary by install script
 # rather than running as root.
 # If using proc-only mode (packet_capture_enabled: false), these capabilities are not needed.
-AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
 
 # Working directory and environment
 WorkingDirectory=/opt/sentinelpi
@@ -35,8 +35,10 @@ RestartSec=10s
 # Resource limits — conservative for Raspberry Pi
 # Adjust if monitoring a high-traffic network
 LimitNOFILE=65536
-MemoryMax=256M          # Hard limit; adjust if needed
-CPUQuota=80%            # Leave 20% for other processes
+# Hard memory limit; adjust if needed
+MemoryMax=256M
+# Leave 20% for other processes
+CPUQuota=80%
 
 # Logging
 StandardOutput=journal
@@ -48,7 +50,8 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=yes
-PrivateDevices=no        # Needs network devices
+# Network devices must remain visible for capture.
+PrivateDevices=no
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

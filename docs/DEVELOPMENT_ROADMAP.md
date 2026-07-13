@@ -55,7 +55,7 @@ have a durable audit record, and threat-feed health is visible per feed.
 - [x] Define profile-versus-explicit-threshold precedence and test it.
 - [x] Implement or remove the dead switches for DNS disable, active discovery, file integrity,
   scheduled reports, and traffic-spike monitoring.
-- [ ] Split passive and active-response deployment capabilities; default to `NET_RAW` without
+- [x] Split passive and active-response deployment capabilities; default to `NET_RAW` without
   `NET_ADMIN`, and make the configured sinkhole target writable when that responder is enabled.
 - [ ] Add NetFlow exporter allowlisting, observation-domain-aware template caches, and cache limits.
 
@@ -67,6 +67,8 @@ explicit and environment-selected config load failures are fatal, and unknown YA
 their full path. Threshold precedence is now defaults, then profile, then explicit values.
 DNS capture/detection disabling, bounded active ARP discovery, SHA-256 file monitoring,
 restart-safe scheduled summaries, and per-interface traffic-spike polling are now wired and tested.
+Default systemd and Compose deployments now grant only `NET_RAW`; explicit response overrides add
+`NET_ADMIN`, and hosts-file sinkhole state defaults to the writable data directory.
 
 ### Phase 3: Resilience And Policy Consistency (Medium)
 
@@ -465,9 +467,10 @@ not yet started. They are infrastructure/operations work rather than detection f
   (hardened `systemd/sentinelpi.service` + `scripts/install.sh`); added `scripts/uninstall.sh` for
   clean teardown, plus a containerized path — a multi-stage `Dockerfile` (slim image, non-root
   `sentinelpi` user, packaged templates, `HEALTHCHECK`), `.dockerignore`, and a `docker-compose.yml`
-  using host networking + `NET_RAW`/`NET_ADMIN` so the non-root process can capture without root.
-  Verified: image builds, runs as non-root, `--check-config`/`--version` work, and the daemon boots
-  with the dashboard serving (auth enforced). README documents both paths._
+  using host networking + `NET_RAW` so the non-root process can capture without root; the 2026-07-12
+  hardening follow-up moved `NET_ADMIN` to an explicit active-response override. Verified: image
+  builds, runs as non-root, `--check-config`/`--version` work, and the daemon boots with the dashboard
+  serving (auth enforced). README documents both paths._
 
 ## Validation Performed
 
