@@ -15,6 +15,7 @@ They also confirm that:
 from __future__ import annotations
 
 import os
+import sqlite3
 
 import pytest
 
@@ -36,6 +37,7 @@ EXPECTED_TABLES = {
     "suspicion_history",
     "app_state",
     "response_actions",
+    "device_trust_events",
 }
 
 
@@ -108,3 +110,9 @@ def test_database_instances_do_not_share_same_thread_connection(tmp_path):
     finally:
         first.close()
         second.close()
+
+
+def test_transaction_errors_are_rolled_back_and_propagated(db):
+    with pytest.raises(sqlite3.OperationalError):
+        with db._conn() as conn:
+            conn.execute("INSERT INTO table_that_does_not_exist VALUES (1)")

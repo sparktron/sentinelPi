@@ -57,7 +57,7 @@ class ActiveHoursDetector(BaseDetector):
 
         # Quiet while the host's profile is still forming or during global
         # learning — otherwise every first-of-its-kind hour would alert.
-        if not established or self.baseline.is_learning:
+        if not established or self.baseline.is_learning or self._is_trusted_device(src):
             return []
 
         return self._build_alert(src, hour, len(seen) - 1)

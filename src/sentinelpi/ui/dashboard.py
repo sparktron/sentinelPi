@@ -426,18 +426,31 @@ def create_app(
             "port_rollup": [_port_rollup_row(r) for r in db.get_port_rollup_for_host(ip)],
             "suspicion_trend": db.get_suspicion_history(ip, since=since),
             "response_actions": actions,
+            "trust_history": device_tracker.get_device_trust_history(ip),
         })
 
     @app.route("/api/devices/<path:ip>/trust", methods=["POST"])
     @require_token
     def api_trust_device(ip: str):
-        """Mark a device as trusted (reduces its alert noise)."""
-        device = device_tracker.get_device(ip)
+        """Trust a device through the live, durable policy."""
+        actor = f"dashboard:{request.remote_addr or 'unknown'}"
+        device = device_tracker.set_device_trust(ip, True, actor)
         if not device:
             abort(404)
-        device.is_trusted = True
-        db.upsert_device(device)
-        return jsonify({"ok": True, "ip": ip})
+        return jsonify({"ok": True, "ip": ip, "trusted": True})
+
+    @app.route("/api/devices/<path:ip>/untrust", methods=["POST"])
+    @require_token
+    def api_untrust_device(ip: str):
+        """Remove dashboard-managed trust without overriding configuration."""
+        actor = f"dashboard:{request.remote_addr or 'unknown'}"
+        try:
+            device = device_tracker.set_device_trust(ip, False, actor)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        if not device:
+            abort(404)
+        return jsonify({"ok": True, "ip": ip, "trusted": False})
 
     @app.route("/api/suspicious")
     @require_token

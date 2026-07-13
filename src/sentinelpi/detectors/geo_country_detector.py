@@ -74,7 +74,7 @@ class GeoCountryDetector(BaseDetector):
 
         # Stay quiet during the learning phase: we're still establishing what's
         # normal, so every country looks "new".
-        if self.baseline.is_learning:
+        if self.baseline.is_learning or self._is_trusted_device(src):
             return []
 
         return self._build_alert(src, dst, country)

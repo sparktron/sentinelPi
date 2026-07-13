@@ -276,9 +276,11 @@ mutates the object returned by `get_device()` outside the tracker's lock.
 **Evidence:** `src/sentinelpi/ui/dashboard.py:431-440` and trusted-set initialization/use in
 `src/sentinelpi/inventory/device_tracker.py`.
 
-**Required fix:** add a locked `DeviceTracker.trust_device()` operation, define which alerts trust
-suppresses, and make detectors consult a live policy source. Record trust changes with actor/time and
-offer an untrust action.
+**Implemented change:** dashboard trust/untrust now calls a locked `DeviceTracker` policy operation.
+Trust is durable by device MAC, survives address changes/restarts, and appends actor/timestamp audit
+events. Connection volume/destination, active-hours, host-profile, new-country, and new-device noise
+consult the live policy; security and reputation detections remain active. Configured trust cannot
+be removed through the dashboard and runtime trust has a matching untrust action.
 
 #### M9. Baseline snapshots could lose the last nine samples at shutdown — Resolved
 

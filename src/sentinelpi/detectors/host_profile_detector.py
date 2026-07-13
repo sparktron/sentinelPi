@@ -127,7 +127,7 @@ class HostProfileDetector(BaseDetector):
         self.db.record_host_profile_value(src, dimension, value)
 
         # Quiet while the profile is still forming or during global learning.
-        if not established or self.baseline.is_learning:
+        if not established or self.baseline.is_learning or self._is_trusted_device(src):
             return []
 
         return self._build_alert(src, dimension, value, len(seen) - 1)

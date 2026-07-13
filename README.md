@@ -263,7 +263,7 @@ unknown YAML keys are fatal instead of silently falling back to defaults.
 | Section | What it controls |
 |---------|------------------|
 | `network` | Interfaces, subnets, gateway IP/MAC, SPAN/mirror mode |
-| `trusted_devices` | Your known devices (suppresses new-device alerts) |
+| `trusted_devices` | Known devices; suppresses new-device and low-confidence learned-behavior alerts, but never security/reputation detections |
 | `monitoring` | Sensitivity profile, packet capture on/off, watchdog/self-monitoring, per-feature toggles |
 | `thresholds` | Per-detector tuning (scan windows, beacon intervals, z-score cutoffs, adaptive thresholds) |
 | `whitelist_ips` / `whitelist_domains` / `whitelist_ports` | Never-alert allowlists |

@@ -80,7 +80,7 @@ Full validation passes with 443 tests, Ruff, mypy, compileall, and the sample co
 - [x] Bound incident-correlator actor/cooldown maps.
 - [x] Scope SQLite thread-local connections per `Database` instance/path.
 - [x] Prevent active response when alert/action persistence fails and surface durable health state.
-- [ ] Make dashboard trust a locked, live, auditable policy that actually changes detector behavior.
+- [x] Make dashboard trust a locked, live, auditable policy that actually changes detector behavior.
 - [ ] Validate and size-limit collector payloads; return structured 4xx errors.
 
 Exit criteria: malformed or high-cardinality inputs remain bounded, trust behavior matches the UI,
@@ -94,6 +94,9 @@ cannot reuse or close one another's connection on the same thread. Alert dispatc
 notification, scoring, correlation, or response if its source record cannot be saved. Response
 plans and pre-execution intent are mandatory persistence gates, and both paths publish durable
 degraded/recovered health through the status payload and critical logs.
+Dashboard trust/untrust now goes through the tracker's locked live policy, persists by device MAC,
+and appends actor/timestamp audit history. Trusted devices suppress only new-device and
+low-confidence learned-behavior alerts; security and reputation detections remain active.
 
 ### Feature Updates After Correctness Work
 

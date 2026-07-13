@@ -28,7 +28,7 @@ from ..models import Alert, AlertStatus, Device, Severity, AlertCategory
 logger = logging.getLogger(__name__)
 
 # Current schema version — bump when adding migrations
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 class Database:
     """
@@ -89,6 +89,7 @@ class Database:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             raise
+            raise
 
     def close(self) -> None:
         """Close the thread-local connection if open."""
@@ -134,6 +135,8 @@ class Database:
             self._migrate_v10(conn)
         if current_version < 11:
             self._migrate_v11(conn)
+        if current_version < 12:
+            self._migrate_v12(conn)
 
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
@@ -387,6 +390,23 @@ class Database:
             if name not in cols:
                 conn.execute(f"ALTER TABLE response_actions ADD COLUMN {name} {definition}")
         logger.info("Database migration v11 applied.")
+
+    def _migrate_v12(self, conn: sqlite3.Connection) -> None:
+        """Auditable runtime device trust policy."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS device_trust_events (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp  TEXT NOT NULL,
+                ip         TEXT NOT NULL,
+                mac        TEXT NOT NULL,
+                trusted    INTEGER NOT NULL,
+                actor      TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_device_trust_events_mac_time
+                ON device_trust_events(mac, timestamp DESC);
+        """)
+        logger.info("Database migration v12 applied.")
 
     # ------------------------------------------------------------------
     # Durable application state
@@ -687,6 +707,48 @@ class Database:
         conn = self._get_connection()
         rows = conn.execute("SELECT mac, ip FROM devices").fetchall()
         return {r["mac"]: r["ip"] for r in rows}
+
+    def set_device_trust(
+        self, ip: str, mac: str, trusted: bool, actor: str, timestamp: datetime
+    ) -> None:
+        """Atomically update an identity's trust flag and append its audit event."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE devices SET is_trusted = ? WHERE mac = ?",
+                (int(trusted), mac),
+            )
+            conn.execute(
+                """
+                INSERT INTO device_trust_events
+                  (timestamp, ip, mac, trusted, actor)
+                VALUES (?,?,?,?,?)
+                """,
+                (timestamp.isoformat(), ip, mac, int(trusted), actor),
+            )
+
+    def get_device_trust_history(self, mac: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return newest-first trust changes for a device identity."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT timestamp, ip, mac, trusted, actor
+            FROM device_trust_events
+            WHERE mac = ?
+            ORDER BY timestamp DESC, id DESC
+            LIMIT ?
+            """,
+            (mac, max(1, min(limit, 200))),
+        ).fetchall()
+        return [
+            {
+                "timestamp": row["timestamp"],
+                "ip": row["ip"],
+                "mac": row["mac"],
+                "trusted": bool(row["trusted"]),
+                "actor": row["actor"],
+            }
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # Baseline

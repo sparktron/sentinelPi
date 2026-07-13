@@ -40,7 +40,8 @@ network:
 # =============================================================================
 # TRUSTED DEVICES
 # =============================================================================
-# Devices known to belong to you — new device alerts are suppressed for these.
+# Devices known to belong to you — new-device and low-confidence learned-behavior
+# alerts are suppressed. Security/reputation detections remain active.
 # You can specify by IP, MAC, or both. Name and notes are for your reference.
 trusted_devices: []
   # - ip: "192.168.1.100"
