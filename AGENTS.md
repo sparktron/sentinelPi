@@ -62,3 +62,17 @@ its scope.
 
 `CHANGELOG.md` is maintained. Add an entry for user-visible changes —
 detection behavior, config keys, deployment steps.
+
+## Where to find deeper context
+
+| Topic | Document |
+|---|---|
+| Current state | `docs/STATUS.md` |
+| Roadmap — active | `docs/DEVELOPMENT_ROADMAP.md` (review-driven backlog; the live phase is Phase 4) |
+| Roadmap — feature history | `docs/FEATURE_ROADMAP.md` (the original Phase 0–6 product roadmap, retained as implementation history; it hands off to the development roadmap) |
+| Latest repository review | `docs/CODE_REVIEW.md` (2026-07-12, corrective findings closed 2026-07-13) |
+
+The two roadmaps are a sequence, not competitors — `FEATURE_ROADMAP.md` says so in its
+own opening and names `DEVELOPMENT_ROADMAP.md` as where current work is tracked. Note the
+phase numbers are scoped per document: "Phase 4" means *Smarter detection* in the feature
+roadmap and *Operational Visibility And Control* in the development roadmap.
