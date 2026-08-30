@@ -35,6 +35,7 @@ from typing import Callable, List, Optional, Type
 from ..models import Alert, AlertCategory, Severity
 from ..alerts.notifiers import BaseNotifier
 from ..responders.base import BaseResponder
+from ..runtime_registry import component_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,30 @@ class CheckResult:
 def run_preflight(config) -> List[CheckResult]:
     """Run all active preflight checks and return their results."""
     results: List[CheckResult] = []
+    results.extend(_check_component_manifest(config))
     results.extend(_check_notifiers(config))
     results.extend(_check_responders(config))
     results.extend(_check_environment(config))
+    return results
+
+
+def _check_component_manifest(config) -> List[CheckResult]:
+    """Expose the same configured/disabled matrix used by runtime startup."""
+    results = []
+    for component in component_manifest(config):
+        routes = f"; routes={','.join(component.routes)}" if component.routes else ""
+        if component.configured:
+            results.append(CheckResult(
+                f"component:{component.key}",
+                "ok",
+                f"configured {component.kind}{routes}",
+            ))
+        else:
+            results.append(CheckResult(
+                f"component:{component.key}",
+                "skip",
+                "disabled by effective configuration",
+            ))
     return results
 
 
@@ -95,6 +117,13 @@ def _check_environment(config) -> List[CheckResult]:
             results.append(CheckResult(name, "ok", f"found {binary} ({found})"))
         else:
             results.append(CheckResult(name, "warn", f"'{binary}' not on PATH — {purpose}"))
+
+    def need_writable_path(name: str, path: str, purpose: str) -> None:
+        target = path if os.path.exists(path) else os.path.dirname(path) or "."
+        if os.path.exists(target) and os.access(target, os.W_OK):
+            results.append(CheckResult(name, "ok", f"writable target {path}"))
+        else:
+            results.append(CheckResult(name, "warn", f"not writable: {path} — {purpose}"))
 
     # Detection inputs (optional data files / libraries).
     if m.geo_enabled:
@@ -138,7 +167,11 @@ def _check_environment(config) -> List[CheckResult]:
             elif backend == "unbound":
                 need_binary("env:dns-sinkhole", "unbound-control", "DNS sinkholing will fail")
             else:  # hosts file
-                need_file("env:dns-sinkhole", "/etc/hosts", "DNS sinkholing will fail")
+                need_writable_path(
+                    "env:dns-sinkhole",
+                    rc.dns_sinkhole_hosts_file,
+                    "hosts-file DNS sinkholing will fail",
+                )
 
     if not results:
         return [CheckResult("environment", "skip", "no file/binary-dependent features enabled")]

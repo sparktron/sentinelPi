@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from ..utils import clock
 from typing import Dict, Set, Tuple
 
@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 # Default z-score thresholds for anomaly detection
 Z_THRESHOLD_MEDIUM = 2.5   # 2.5 standard deviations above mean
 Z_THRESHOLD_HIGH   = 4.0   # 4.0 standard deviations above mean
+
+_LEARNING_STARTED_STATE_KEY = "baseline_learning_started_at"
 
 
 class RunningStats:
@@ -111,6 +113,7 @@ class BaselineEngine:
 
         # In-memory stats: (ip, hour_of_day, day_of_week) → RunningStats
         self._conn_stats: Dict[Tuple[str, int, int], RunningStats] = {}
+        self._dirty_conn_stats: Set[Tuple[str, int, int]] = set()
 
         # Traffic bytes per minute per interface: iface → RunningStats
         self._traffic_stats: Dict[str, RunningStats] = {}
@@ -125,16 +128,41 @@ class BaselineEngine:
         # Destination baseline: (src_ip, dst_ip, dst_port, proto) → seen count
         self._known_destinations: Set[Tuple[str, str, int, str]] = set()
 
-        # Service start time — used to determine if we're still in learning phase
-        self._start_time: datetime = clock.now()
+        # Baseline learning age is durable. Restarting the daemon must not put a
+        # mature sensor back into a full quiet/learning period.
+        self._start_time = self._load_learning_started_at()
 
         # Load from database on startup
         self._load_from_db()
 
         logger.info(
-            "BaselineEngine initialized. Learning phase: %d hours.",
+            "BaselineEngine initialized. Learning phase: %d hours (started %s).",
             config.monitoring.baseline_learning_hours,
+            self._start_time.isoformat(),
         )
+
+    def _load_learning_started_at(self) -> datetime:
+        """Load or initialize the durable baseline-learning epoch."""
+        raw = self.db.get_app_state(_LEARNING_STARTED_STATE_KEY)
+        if raw is None:
+            # Upgrade compatibility: an existing baseline predates app_state.
+            # Use its oldest observation so a mature install does not relearn.
+            raw = self.db.get_earliest_baseline_timestamp()
+
+        if raw:
+            try:
+                started = datetime.fromisoformat(raw)
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                started = started.astimezone(timezone.utc)
+            except (TypeError, ValueError):
+                logger.warning("Invalid persisted baseline learning timestamp %r; resetting.", raw)
+                started = clock.now()
+        else:
+            started = clock.now()
+
+        self.db.set_app_state(_LEARNING_STARTED_STATE_KEY, started.isoformat())
+        return started
 
     def _load_from_db(self) -> None:
         """Pre-populate in-memory caches from database."""
@@ -168,6 +196,8 @@ class BaselineEngine:
     @property
     def is_learning(self) -> bool:
         """True if we're still in the initial learning phase."""
+        if self.config.monitoring.baseline_learning_hours <= 0:
+            return False
         elapsed_hours = (clock.now() - self._start_time).total_seconds() / 3600
         return elapsed_hours < self.config.monitoring.baseline_learning_hours
 
@@ -190,13 +220,43 @@ class BaselineEngine:
             if key not in self._conn_stats:
                 self._conn_stats[key] = RunningStats()
             self._conn_stats[key].update(float(count))
+            self._dirty_conn_stats.add(key)
+            stats = self._conn_stats[key]
+            checkpoint = (
+                (stats.mean, stats.stddev, stats.n) if stats.n % 10 == 0 else None
+            )
 
         # Persist a snapshot of the authoritative in-memory stats periodically
         # (every 10 updates). The DB row mirrors RunningStats — it is not a
         # second, independently-derived estimate.
-        stats = self._conn_stats.get(key)
-        if stats and stats.n % 10 == 0:
-            self.db.update_hourly_baseline(ip, hour, dow, stats.mean, stats.stddev, stats.n)
+        if checkpoint is not None:
+            mean, stddev, sample_count = checkpoint
+            self.db.update_hourly_baseline(ip, hour, dow, mean, stddev, sample_count)
+            with self._lock:
+                current = self._conn_stats.get(key)
+                if current is not None and current.n == sample_count:
+                    self._dirty_conn_stats.discard(key)
+
+    def flush(self) -> int:
+        """Persist every dirty connection baseline snapshot; return rows written."""
+        with self._lock:
+            snapshots = [
+                (key, stats.mean, stats.stddev, stats.n)
+                for key in self._dirty_conn_stats
+                if (stats := self._conn_stats.get(key)) is not None
+            ]
+
+        written = 0
+        for (ip, hour, dow), mean, stddev, sample_count in snapshots:
+            self.db.update_hourly_baseline(ip, hour, dow, mean, stddev, sample_count)
+            written += 1
+            with self._lock:
+                current = self._conn_stats.get((ip, hour, dow))
+                if current is not None and current.n == sample_count:
+                    self._dirty_conn_stats.discard((ip, hour, dow))
+        if written:
+            logger.info("Flushed %d dirty baseline snapshot(s).", written)
+        return written
 
     def check_connection_spike(self, ip: str, current_count: int) -> Tuple[bool, float]:
         """

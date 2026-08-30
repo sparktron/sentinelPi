@@ -11,7 +11,7 @@ H4: update_hourly_baseline used a biased EWMA recurrence (mislabeled "Welford")
 from __future__ import annotations
 
 import statistics
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sentinelpi.baseline.engine import BaselineEngine, RunningStats
 from sentinelpi.utils import clock
@@ -92,3 +92,52 @@ def test_hourly_connection_baseline_rehydrates_after_restart(config, db):
 
     assert is_spike
     assert z_score > 0
+
+
+def test_learning_period_does_not_restart_with_daemon(config, db):
+    config.monitoring.baseline_learning_hours = 24
+    first_start = datetime(2026, 7, 1, 12, 0, tzinfo=timezone.utc)
+
+    with clock.use_clock(clock.FixedClock(first_start)):
+        first = BaselineEngine(config, db)
+        assert first.is_learning
+
+    after_learning = first_start + timedelta(hours=25)
+    with clock.use_clock(clock.FixedClock(after_learning)):
+        restarted = BaselineEngine(config, db)
+        assert not restarted.is_learning
+        assert restarted._start_time == first_start
+
+
+def test_existing_baseline_seeds_learning_epoch_on_upgrade(config, db):
+    config.monitoring.baseline_learning_hours = 24
+    first_seen = datetime(2026, 6, 1, 8, 0, tzinfo=timezone.utc)
+    now = first_seen + timedelta(days=7)
+
+    with clock.use_clock(clock.FixedClock(first_seen)):
+        db.record_dns_domain("existing.example")
+
+    with clock.use_clock(clock.FixedClock(now)):
+        baseline = BaselineEngine(config, db)
+
+    assert not baseline.is_learning
+    assert baseline._start_time == first_seen
+
+
+def test_flush_persists_partial_checkpoint(config, db):
+    instant = datetime(2026, 7, 12, 14, 0, tzinfo=timezone.utc)
+    with clock.use_clock(clock.FixedClock(instant)):
+        baseline = BaselineEngine(config, db)
+        for value in (5, 7, 6):
+            baseline.record_connection_count("192.168.1.50", value)
+
+        assert db.get_hourly_baseline(
+            "192.168.1.50", instant.hour, instant.weekday()
+        ) is None
+        assert baseline.flush() == 1
+
+    row = db.get_hourly_baseline("192.168.1.50", instant.hour, instant.weekday())
+    assert row is not None
+    assert row["sample_count"] == 3
+    assert row["avg_conn"] == 6.0
+    assert baseline.flush() == 0

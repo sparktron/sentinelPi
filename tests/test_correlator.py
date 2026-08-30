@@ -150,6 +150,41 @@ def test_window_pruning(config):
     assert corr.observe(_alert(sensor="pi-b")) is None
 
 
+def test_actor_state_has_hard_lru_ceiling(config):
+    config.correlation.enabled = True
+    config.correlation.min_sensors = 99
+    config.correlation.min_targets = 99
+    config.correlation.max_actors = 3
+    corr = IncidentCorrelator(config)
+
+    for index in range(10):
+        corr.observe(_alert(actor=f"192.0.2.{index}", category=AlertCategory.BEACON))
+
+    assert list(corr._events) == ["192.0.2.7", "192.0.2.8", "192.0.2.9"]
+    assert corr.state_metrics["tracked_actors"] == 3
+    assert corr.state_metrics["actor_evictions"] == 7
+
+
+def test_expired_actor_and_cooldown_state_is_pruned(config):
+    config.correlation.enabled = True
+    config.correlation.window_seconds = 60
+    config.correlation.cooldown_seconds = 60
+    config.correlation.min_sensors = 1
+    config.correlation.max_actors = 10
+    corr = IncidentCorrelator(config)
+    start = clock.now()
+
+    with clock.use_clock(clock.FixedClock(start)):
+        assert corr.observe(_alert(actor="192.0.2.1", category=AlertCategory.BEACON)) is not None
+    with clock.use_clock(clock.FixedClock(start + timedelta(seconds=61))):
+        corr.observe(_alert(actor="192.0.2.2", category=AlertCategory.BEACON))
+
+    assert "192.0.2.1" not in corr._events
+    assert "192.0.2.1" not in corr._last_incident
+    assert corr.state_metrics["expired_actors"] >= 1
+    assert corr.state_metrics["expired_cooldowns"] >= 1
+
+
 def test_incident_alerts_are_not_recorrelated(correlator):
     incident = _alert(category=AlertCategory.INCIDENT)
     assert correlator.observe(incident) is None
@@ -181,3 +216,4 @@ def test_alert_manager_raises_incident(config, db, device_tracker):
     assert any(a.category == AlertCategory.INCIDENT for a in captured)
     saved = db.get_recent_alerts(limit=20)
     assert any(a.category == AlertCategory.INCIDENT for a in saved)
+    assert am.get_stats()["correlator"]["tracked_actors"] == 1

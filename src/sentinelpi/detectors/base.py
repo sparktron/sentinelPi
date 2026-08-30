@@ -155,6 +155,10 @@ class BaseDetector(ABC):
         """Check if a port is in the user's whitelist."""
         return port in self.config.whitelist_ports
 
+    def _is_trusted_device(self, ip: str) -> bool:
+        """Consult the live device-trust policy without treating it as a whitelist."""
+        return self.device_tracker.is_trusted_device(ip)
+
     def _is_local_ip(self, ip: str) -> bool:
         """Check if IP belongs to the configured local subnets."""
         from ..utils.network import ip_in_any_subnet

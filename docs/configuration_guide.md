@@ -34,7 +34,9 @@ Find gateway MAC: `arp -n | grep <gateway_ip>`
 
 ### Trusted Devices
 
-Trusted devices suppress new-device alerts:
+Trusted devices suppress new-device and low-confidence learned-behavior alerts. Security and
+reputation detections such as ARP spoofing, port scans, threat-intelligence hits, and suspicious ASN
+matches remain active:
 
 ```yaml
 trusted_devices:
@@ -74,6 +76,17 @@ monitoring:
   host_profile_detection_enabled: true
   self_monitoring_enabled: true    # SYSTEM alerts if SentinelPi itself degrades
 ```
+
+Disabling `dns_monitoring_enabled` removes DNS from the packet-capture filter and detector route.
+Active discovery performs a bounded IPv4 ARP sweep at the configured interval and feeds replies
+through the normal device inventory. File-integrity monitoring hashes configured files with
+SHA-256 and alerts on content or availability changes. Interface byte counters are sampled once a
+minute for traffic-spike baselining.
+
+Daily and weekly reports run after `reporting.daily_report_hour` in the host's local timezone and
+are routed through the normal alert pipeline. The last delivered period is persisted so restarting
+the service does not duplicate a report. Explicit timezone/DST selection, missed-run recovery, and
+per-channel delivery tracking remain planned work.
 
 `active_hours_detection_enabled` learns when each host is normally active.
 `host_profile_detection_enabled` learns each host's usual destination ports,
@@ -333,6 +346,11 @@ flow:
   netflow_enabled: false
   netflow_bind_host: "0.0.0.0"
   netflow_port: 2055
+  netflow_allowed_exporters: ["192.168.1.1"]  # required when enabled; IPs or CIDRs
+  netflow_max_exporters: 16
+  netflow_max_observation_domains_per_exporter: 32
+  netflow_max_templates_per_context: 256
+  netflow_max_records_per_datagram: 4096
 
   # pfSense/OPNsense filterlog — forward the firewall's syslog to the Pi and
   # write it to a file (rsyslog), then point filterlog_path at that file
@@ -340,6 +358,12 @@ flow:
   filterlog_path: /var/log/filter.log
   filterlog_interval_seconds: 5
 ```
+
+The UDP collector rejects exporters outside `netflow_allowed_exporters`. NetFlow v9 source IDs and
+IPFIX observation-domain IDs isolate template namespaces; the remaining limits bound exporter,
+domain, template, and per-datagram record work. Use exact exporter IPs unless a CIDR is operationally
+necessary. Raw NetFlow UDP is not authenticated, so keep the listener on a trusted management
+network or place a local authenticated collector/proxy in front of SentinelPi.
 
 ## Whitelisting
 

@@ -25,8 +25,11 @@ from __future__ import annotations
 import ipaddress
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+
+from ..utils import clock
 
 logger = logging.getLogger(__name__)
 
@@ -166,11 +169,26 @@ class ThreatIntelService:
         self._ips: Dict[str, Indicator] = {}
         self._domains: Dict[str, Indicator] = {}
         self._cidrs: List[Tuple[ipaddress._BaseNetwork, Indicator]] = []
+        self._feed_status: Dict[str, dict] = {}
 
     # ------------------------------------------------------------------ query
     @property
     def indicator_count(self) -> int:
         return len(self._ips) + len(self._domains) + len(self._cidrs)
+
+    @property
+    def refresh_status(self) -> Dict[str, dict]:
+        """Per-feed refresh/freshness state, safe for watchdog/API serialization."""
+        return {name: dict(status) for name, status in self._feed_status.items()}
+
+    @property
+    def refresh_error_summary(self) -> str:
+        failures = [
+            f"{name}: {status['error']}"
+            for name, status in self._feed_status.items()
+            if status.get("error")
+        ]
+        return "; ".join(failures)
 
     def match_ip(self, ip: str) -> Optional[Indicator]:
         """Return the matching indicator for an IP, or None."""
@@ -219,6 +237,19 @@ class ThreatIntelService:
             text = self._read_cache(feed)
             if text is None:
                 continue
+            if feed_name not in self._feed_status:
+                try:
+                    cached_at = datetime.fromtimestamp(
+                        self._cache_path(feed).stat().st_mtime, tz=timezone.utc
+                    ).isoformat()
+                except OSError:
+                    cached_at = None
+                self._feed_status[feed_name] = {
+                    "last_attempt_at": None,
+                    "last_success_at": cached_at,
+                    "last_attempt_success": None,
+                    "error": "",
+                }
             self._index_feed(feed, text, ips, domains, cidrs)
 
         # Atomic swap.
@@ -238,20 +269,46 @@ class ThreatIntelService:
         any_ok = False
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         for feed_name in self._config.feeds:
+            attempted_at = clock.now().isoformat()
+            previous = self._feed_status.get(feed_name, {})
             feed = FEEDS.get(feed_name)
             if feed is None:
                 logger.warning("Unknown threat-intel feed '%s' — skipping.", feed_name)
+                self._feed_status[feed_name] = {
+                    "last_attempt_at": attempted_at,
+                    "last_success_at": previous.get("last_success_at"),
+                    "last_attempt_success": False,
+                    "error": "unknown feed",
+                }
                 continue
             try:
                 text = self._fetcher(feed.url, float(self._config.fetch_timeout_seconds))
             except Exception as exc:
                 logger.warning("Threat feed '%s' fetch failed (%s) — keeping cache.", feed_name, exc)
+                self._feed_status[feed_name] = {
+                    "last_attempt_at": attempted_at,
+                    "last_success_at": previous.get("last_success_at"),
+                    "last_attempt_success": False,
+                    "error": str(exc),
+                }
                 continue
             try:
                 self._cache_path(feed).write_text(text, encoding="utf-8")
                 any_ok = True
+                self._feed_status[feed_name] = {
+                    "last_attempt_at": attempted_at,
+                    "last_success_at": attempted_at,
+                    "last_attempt_success": True,
+                    "error": "",
+                }
             except OSError as exc:
                 logger.warning("Could not write cache for feed '%s': %s", feed_name, exc)
+                self._feed_status[feed_name] = {
+                    "last_attempt_at": attempted_at,
+                    "last_success_at": previous.get("last_success_at"),
+                    "last_attempt_success": False,
+                    "error": str(exc),
+                }
         self.load()
         return any_ok
 

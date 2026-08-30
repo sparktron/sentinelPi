@@ -28,11 +28,7 @@ from ..models import Alert, AlertStatus, Device, Severity, AlertCategory
 logger = logging.getLogger(__name__)
 
 # Current schema version — bump when adding migrations
-SCHEMA_VERSION = 8
-
-# Thread-local storage for per-thread SQLite connections
-_thread_local = threading.local()
-
+SCHEMA_VERSION = 12
 
 class Database:
     """
@@ -45,6 +41,8 @@ class Database:
     def __init__(self, db_path: str, retention_days: int = 30) -> None:
         self.db_path = db_path
         self.retention_days = retention_days
+        # Each Database instance owns its own per-thread connection namespace.
+        self._local = threading.local()
         # Ensure parent directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         # Initialize schema on the calling thread
@@ -57,7 +55,7 @@ class Database:
 
     def _get_connection(self) -> sqlite3.Connection:
         """Return (or create) the thread-local SQLite connection."""
-        conn = getattr(_thread_local, "conn", None)
+        conn = getattr(self._local, "conn", None)
         if conn is None:
             conn = sqlite3.connect(
                 self.db_path,
@@ -70,7 +68,7 @@ class Database:
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA foreign_keys=ON")
             conn.execute("PRAGMA cache_size=-4096")  # 4 MB cache
-            _thread_local.conn = conn
+            self._local.conn = conn
             logger.debug("Opened new SQLite connection on thread %s", threading.current_thread().name)
         return conn
 
@@ -91,13 +89,14 @@ class Database:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
             raise
+            raise
 
     def close(self) -> None:
         """Close the thread-local connection if open."""
-        conn = getattr(_thread_local, "conn", None)
+        conn = getattr(self._local, "conn", None)
         if conn:
             conn.close()
-            _thread_local.conn = None
+            self._local.conn = None
 
     # ------------------------------------------------------------------
     # Schema management
@@ -130,6 +129,14 @@ class Database:
             self._migrate_v7(conn)
         if current_version < 8:
             self._migrate_v8(conn)
+        if current_version < 9:
+            self._migrate_v9(conn)
+        if current_version < 10:
+            self._migrate_v10(conn)
+        if current_version < 11:
+            self._migrate_v11(conn)
+        if current_version < 12:
+            self._migrate_v12(conn)
 
         conn.execute("DELETE FROM schema_version")
         conn.execute("INSERT INTO schema_version VALUES (?)", (SCHEMA_VERSION,))
@@ -333,6 +340,179 @@ class Database:
         """)
         logger.info("Database migration v8 applied.")
 
+    def _migrate_v9(self, conn: sqlite3.Connection) -> None:
+        """Durable application state, beginning with baseline learning age."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_state (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        logger.info("Database migration v9 applied.")
+
+    def _migrate_v10(self, conn: sqlite3.Connection) -> None:
+        """Durable active-response action ledger."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS response_actions (
+                action_id   TEXT PRIMARY KEY,
+                alert_id    TEXT,
+                responder   TEXT NOT NULL,
+                target      TEXT NOT NULL,
+                description TEXT NOT NULL,
+                commands    TEXT NOT NULL,
+                created_at  TEXT NOT NULL,
+                updated_at  TEXT NOT NULL,
+                status      TEXT NOT NULL,
+                dry_run     INTEGER NOT NULL DEFAULT 1,
+                executed    INTEGER NOT NULL DEFAULT 0,
+                success     INTEGER NOT NULL DEFAULT 0,
+                error       TEXT NOT NULL DEFAULT '',
+                expires_at  TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_response_actions_created
+                ON response_actions(created_at);
+            CREATE INDEX IF NOT EXISTS idx_response_actions_status
+                ON response_actions(status);
+        """)
+        logger.info("Database migration v10 applied.")
+
+    def _migrate_v11(self, conn: sqlite3.Connection) -> None:
+        """Timed-response rollback and expiration state."""
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(response_actions)")}
+        additions = {
+            "rollback_commands": "TEXT NOT NULL DEFAULT '[]'",
+            "duration_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "expired_at": "TEXT",
+        }
+        for name, definition in additions.items():
+            if name not in cols:
+                conn.execute(f"ALTER TABLE response_actions ADD COLUMN {name} {definition}")
+        logger.info("Database migration v11 applied.")
+
+    def _migrate_v12(self, conn: sqlite3.Connection) -> None:
+        """Auditable runtime device trust policy."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS device_trust_events (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp  TEXT NOT NULL,
+                ip         TEXT NOT NULL,
+                mac        TEXT NOT NULL,
+                trusted    INTEGER NOT NULL,
+                actor      TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_device_trust_events_mac_time
+                ON device_trust_events(mac, timestamp DESC);
+        """)
+        logger.info("Database migration v12 applied.")
+
+    # ------------------------------------------------------------------
+    # Durable application state
+    # ------------------------------------------------------------------
+
+    def get_app_state(self, key: str) -> Optional[str]:
+        """Return a persisted application-state value, or None when absent."""
+        conn = self._get_connection()
+        row = conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+        return str(row["value"]) if row else None
+
+    def set_app_state(self, key: str, value: str) -> None:
+        """Atomically create or replace an application-state value."""
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO app_state (key, value, updated_at) VALUES (?,?,?)
+                ON CONFLICT(key) DO UPDATE SET
+                  value = excluded.value,
+                  updated_at = excluded.updated_at
+                """,
+                (key, value, clock.now().isoformat()),
+            )
+
+    def get_earliest_baseline_timestamp(self) -> Optional[str]:
+        """Return the oldest persisted baseline observation timestamp."""
+        conn = self._get_connection()
+        row = conn.execute(
+            """
+            SELECT MIN(ts) AS earliest FROM (
+                SELECT MIN(first_seen) AS ts FROM baseline_destinations
+                UNION ALL
+                SELECT MIN(first_seen) AS ts FROM baseline_dns
+                UNION ALL
+                SELECT MIN(updated_at) AS ts FROM baseline_hourly
+            )
+            """
+        ).fetchone()
+        return str(row["earliest"]) if row and row["earliest"] else None
+
+    # ------------------------------------------------------------------
+    # Active-response action ledger
+    # ------------------------------------------------------------------
+
+    def save_response_action(self, action: Any) -> None:
+        """Persist the latest lifecycle state of a responder action."""
+        expires_at = getattr(action, "expires_at", None)
+        with self._conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO response_actions
+                  (action_id, alert_id, responder, target, description, commands,
+                   created_at, updated_at, status, dry_run, executed, success,
+                   error, expires_at, rollback_commands, duration_seconds, expired_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(action_id) DO UPDATE SET
+                  alert_id = excluded.alert_id,
+                  responder = excluded.responder,
+                  target = excluded.target,
+                  description = excluded.description,
+                  commands = excluded.commands,
+                  updated_at = excluded.updated_at,
+                  status = excluded.status,
+                  dry_run = excluded.dry_run,
+                  executed = excluded.executed,
+                  success = excluded.success,
+                  error = excluded.error,
+                  expires_at = excluded.expires_at,
+                  rollback_commands = excluded.rollback_commands,
+                  duration_seconds = excluded.duration_seconds,
+                  expired_at = excluded.expired_at
+                """,
+                (
+                    action.action_id,
+                    action.alert_id,
+                    action.responder,
+                    action.target,
+                    action.description,
+                    json.dumps(action.commands),
+                    action.created_at.isoformat(),
+                    clock.now().isoformat(),
+                    action.status,
+                    int(action.dry_run),
+                    int(action.executed),
+                    int(action.success),
+                    action.error,
+                    expires_at.isoformat() if expires_at is not None else None,
+                    json.dumps(action.rollback_commands),
+                    int(action.duration_seconds),
+                    action.expired_at.isoformat() if action.expired_at is not None else None,
+                ),
+            )
+
+    def get_response_actions(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """Return the newest responder actions in chronological order."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT * FROM (
+                SELECT * FROM response_actions ORDER BY created_at DESC LIMIT ?
+            ) ORDER BY created_at ASC
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     # ------------------------------------------------------------------
     # Alert CRUD
     # ------------------------------------------------------------------
@@ -527,6 +707,48 @@ class Database:
         conn = self._get_connection()
         rows = conn.execute("SELECT mac, ip FROM devices").fetchall()
         return {r["mac"]: r["ip"] for r in rows}
+
+    def set_device_trust(
+        self, ip: str, mac: str, trusted: bool, actor: str, timestamp: datetime
+    ) -> None:
+        """Atomically update an identity's trust flag and append its audit event."""
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE devices SET is_trusted = ? WHERE mac = ?",
+                (int(trusted), mac),
+            )
+            conn.execute(
+                """
+                INSERT INTO device_trust_events
+                  (timestamp, ip, mac, trusted, actor)
+                VALUES (?,?,?,?,?)
+                """,
+                (timestamp.isoformat(), ip, mac, int(trusted), actor),
+            )
+
+    def get_device_trust_history(self, mac: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return newest-first trust changes for a device identity."""
+        conn = self._get_connection()
+        rows = conn.execute(
+            """
+            SELECT timestamp, ip, mac, trusted, actor
+            FROM device_trust_events
+            WHERE mac = ?
+            ORDER BY timestamp DESC, id DESC
+            LIMIT ?
+            """,
+            (mac, max(1, min(limit, 200))),
+        ).fetchall()
+        return [
+            {
+                "timestamp": row["timestamp"],
+                "ip": row["ip"],
+                "mac": row["mac"],
+                "trusted": bool(row["trusted"]),
+                "actor": row["actor"],
+            }
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # Baseline

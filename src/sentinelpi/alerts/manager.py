@@ -31,6 +31,7 @@ from ..config.manager import Config
 from ..utils.network import is_private_ip, is_valid_ip
 from ..utils.geo import lookup_country, lookup_country_name
 from ..utils.asn import lookup_asn
+from ..utils.persistence_health import DurablePersistenceHealth
 from .notifiers import BaseNotifier
 
 logger = logging.getLogger(__name__)
@@ -78,10 +79,12 @@ class AlertManager:
         self.device_tracker = device_tracker
         self._lock = threading.Lock()
         self._notifiers: List[BaseNotifier] = []
+        self._notifier_activity_callback = None
         # Optional active-response orchestrator (Phase 2); off unless wired up.
         self._responder_manager = None
         # Optional incident correlator (Phase 3); built when enabled.
         self._correlator = None
+        self._correlator_activity_callback = None
         if getattr(config, "correlation", None) and config.correlation.enabled:
             from .correlator import IncidentCorrelator
             self._correlator = IncidentCorrelator(config)
@@ -91,12 +94,20 @@ class AlertManager:
         self._total_processed = 0
         self._total_suppressed = 0
         self._total_fired = 0
+        self._total_persistence_failed = 0
+        self._persistence_health = DurablePersistenceHealth(
+            db, "health.persistence.alerts"
+        )
 
     def add_notifier(self, notifier: BaseNotifier) -> None:
         """Register a notifier to receive alerts."""
         with self._lock:
             self._notifiers.append(notifier)
         logger.debug("Registered notifier: %s", notifier.__class__.__name__)
+
+    def set_notifier_activity_callback(self, callback) -> None:
+        """Observe successful notifier dispatches for runtime capability status."""
+        self._notifier_activity_callback = callback
 
     def close_notifiers(self, timeout: float = 5.0) -> None:
         """Stop and drain registered notifiers that own background resources."""
@@ -111,6 +122,15 @@ class AlertManager:
     def set_responder_manager(self, responder_manager) -> None:
         """Wire in an active-response orchestrator (Phase 2). Optional."""
         self._responder_manager = responder_manager
+
+    @property
+    def correlator(self):
+        """Return the optional incident correlator for runtime registration."""
+        return self._correlator
+
+    def set_correlator_activity_callback(self, callback) -> None:
+        """Observe incident-correlation input for runtime capability status."""
+        self._correlator_activity_callback = callback
 
     def process(self, alerts: List[Alert]) -> int:
         """
@@ -153,8 +173,6 @@ class AlertManager:
             self._recent_dedup[alert.dedup_key] = alert.timestamp
             self._prune_dedup()
 
-            self._total_fired += 1
-
         # Outside lock: DB write and notifier calls (may be slow)
         # 3b. Enrich with GeoIP country + ASN for the external IP (centralized
         #     so every detector's alerts get consistent context). No-op when the
@@ -165,7 +183,17 @@ class AlertManager:
         try:
             self.db.save_alert(alert)
         except Exception as exc:
-            logger.error("Failed to save alert to DB: %s", exc)
+            self._persistence_health.mark_failed(exc)
+            with self._lock:
+                # A failed alert must be retryable rather than suppressed by
+                # the reservation made before the database write.
+                if self._recent_dedup.get(alert.dedup_key) == alert.timestamp:
+                    self._recent_dedup.pop(alert.dedup_key, None)
+                self._total_persistence_failed += 1
+            return False
+        self._persistence_health.mark_succeeded()
+        with self._lock:
+            self._total_fired += 1
 
         # 5. Update device suspicion score, and record a trend point at this
         #    instant so the dashboard can chart the host's suspicion over time.
@@ -182,6 +210,8 @@ class AlertManager:
         for notifier in self._notifiers:
             try:
                 notifier.send(alert)
+                if self._notifier_activity_callback is not None:
+                    self._notifier_activity_callback(notifier)
             except Exception as exc:
                 logger.error("Notifier %s failed: %s", notifier.__class__.__name__, exc)
 
@@ -198,6 +228,8 @@ class AlertManager:
         if self._correlator is not None:
             try:
                 incident = self._correlator.observe(alert)
+                if self._correlator_activity_callback is not None:
+                    self._correlator_activity_callback(self._correlator)
                 if incident is not None:
                     self.process_one(incident)
             except Exception as exc:
@@ -353,12 +385,20 @@ class AlertManager:
     def get_stats(self) -> dict:
         """Return manager statistics for dashboard."""
         with self._lock:
-            return {
+            stats: dict = {
                 "total_processed": self._total_processed,
                 "total_suppressed": self._total_suppressed,
                 "total_fired": self._total_fired,
+                "total_persistence_failed": self._total_persistence_failed,
                 "suppression_rate": (
                     self._total_suppressed / self._total_processed
                     if self._total_processed > 0 else 0.0
                 ),
             }
+        if self._correlator is not None:
+            stats["correlator"] = self._correlator.state_metrics
+        persistence = {"alerts": self._persistence_health.status}
+        if self._responder_manager is not None:
+            persistence["responses"] = self._responder_manager.persistence_health
+        stats["persistence"] = persistence
+        return stats

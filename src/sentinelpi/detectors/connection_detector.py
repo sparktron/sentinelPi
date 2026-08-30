@@ -118,6 +118,8 @@ class ConnectionDetector(BaseDetector):
         self, ip: str, count: int, z_score: float, now: datetime
     ) -> Optional[Alert]:
         """Create a connection count spike alert."""
+        if self._is_trusted_device(ip):
+            return None
         dedup_key = f"conn_spike:{ip}"
         if self._is_on_cooldown(dedup_key, now, 600):
             return None
@@ -168,7 +170,7 @@ class ConnectionDetector(BaseDetector):
 
     def _new_destination_alert(self, conn: "ProcConnection", now: datetime) -> Optional[Alert]:
         """Alert on first-ever connection to an external IP/port."""
-        if self._is_whitelisted_ip(conn.remote_ip):
+        if self._is_trusted_device(conn.local_ip) or self._is_whitelisted_ip(conn.remote_ip):
             return None
         if conn.remote_port in COMMON_OUTBOUND_PORTS:
             # Common ports to new IPs are lower interest

@@ -106,6 +106,32 @@ def test_watchdog_alerts_on_threat_intel_refresh_error(config):
     assert alerts[0].extra["watchdog"]["last_error"] == "timeout"
 
 
+def test_watchdog_exposes_per_feed_refresh_state(config):
+    config.threat_intel.enabled = True
+    watchdog = OperationalWatchdog(config, queue.Queue(maxsize=10), [])
+    watchdog.record_threat_intel_refresh(
+        success=True,
+        error="urlhaus: timeout",
+        feeds={
+            "feodo": {
+                "last_success_at": clock.now().isoformat(),
+                "last_attempt_success": True,
+                "error": "",
+            },
+            "urlhaus": {
+                "last_success_at": None,
+                "last_attempt_success": False,
+                "error": "timeout",
+            },
+        },
+    )
+
+    status = watchdog.snapshot()["threat_intel"]
+    assert status["failed_feeds"] == ["urlhaus"]
+    assert status["feeds"]["feodo"]["stale"] is False
+    assert status["feeds"]["urlhaus"]["error"] == "timeout"
+
+
 def test_watchdog_alerts_on_stale_threat_intel(config):
     start = datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc)
     config.threat_intel.enabled = True

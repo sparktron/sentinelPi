@@ -7,10 +7,11 @@ keys fall back to safe defaults so the tool runs out of the box.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
-import ipaddress
 import re
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -324,7 +325,7 @@ class ResponseConfig:
     # DNS sinkhole responder (domain-level block; per-action opt-in).
     dns_sinkhole_enabled: bool = False
     dns_sinkhole_backend: str = "hosts"         # "hosts" | "pihole" | "unbound"
-    dns_sinkhole_hosts_file: str = "/etc/sentinelpi/sinkhole.hosts"
+    dns_sinkhole_hosts_file: str = "/var/lib/sentinelpi/sinkhole.hosts"
     sinkhole_categories: List[str] = field(default_factory=lambda: ["threat_intel", "dns_anomaly"])
     sinkhole_min_severity: str = "high"
 
@@ -372,6 +373,7 @@ class ClusterConfig:
     # Collector side: require the fronting proxy to have verified the client cert
     # (proxy sets X-SentinelPi-Client-Verified: SUCCESS from $ssl_client_verify).
     ingest_require_verified_header: bool = False
+    ingest_max_payload_bytes: int = 65_536
 
 
 @dataclass
@@ -386,6 +388,7 @@ class CorrelationConfig:
     min_sensors: int = 2        # actor seen by >= this many sensors -> incident
     min_targets: int = 5        # OR actor hit >= this many distinct targets -> incident
     cooldown_seconds: int = 600
+    max_actors: int = 4096      # hard ceiling for high-cardinality/spoofed actor state
 
 
 @dataclass
@@ -406,6 +409,12 @@ class FlowIngestConfig:
     netflow_enabled: bool = False
     netflow_bind_host: str = "0.0.0.0"
     netflow_port: int = 2055
+    # Required trust boundary when enabled; entries may be IPs or CIDRs.
+    netflow_allowed_exporters: List[str] = field(default_factory=list)
+    netflow_max_exporters: int = 16
+    netflow_max_observation_domains_per_exporter: int = 32
+    netflow_max_templates_per_context: int = 256
+    netflow_max_records_per_datagram: int = 4096
     # pfSense/OPNsense filterlog tailing (point at a file the Pi can read —
     # usually the firewall's syslog forwarded to and written by the Pi's rsyslog).
     filterlog_enabled: bool = False
@@ -451,25 +460,52 @@ class ConfigIssue:
         return f"{self.path}: {self.message}"
 
 
-def _merge_dataclass_from_dict(dc_instance: Any, data: Dict[str, Any]) -> None:
+class ConfigError(ValueError):
+    """Configuration could not be loaded safely."""
+
+
+def _merge_dataclass_from_dict(dc_instance: Any, data: Dict[str, Any], path: str = "") -> None:
     """
     Recursively populate a dataclass instance from a dict.
-    Unknown keys are ignored. Nested dataclasses are handled recursively.
+    Unknown keys are rejected. Nested dataclasses are handled recursively.
     """
-    import dataclasses
     if not dataclasses.is_dataclass(dc_instance):
         return
-    for f in dataclasses.fields(dc_instance):
-        if f.name.startswith("_"):
+    fields = {f.name: f for f in dataclasses.fields(dc_instance) if not f.name.startswith("_")}
+    for key in data:
+        if key not in fields:
+            key_path = f"{path}.{key}" if path else key
+            raise ConfigError(f"unknown configuration key: {key_path}")
+    for name, f in fields.items():
+        if name not in data:
             continue
-        if f.name not in data:
-            continue
-        val = data[f.name]
-        current = getattr(dc_instance, f.name)
-        if dataclasses.is_dataclass(current) and isinstance(val, dict):
-            _merge_dataclass_from_dict(current, val)
+        val = data[name]
+        current = getattr(dc_instance, name)
+        key_path = f"{path}.{name}" if path else name
+        if dataclasses.is_dataclass(current):
+            if not isinstance(val, dict):
+                raise ConfigError(f"{key_path}: must be a mapping")
+            _merge_dataclass_from_dict(current, val, key_path)
         else:
-            setattr(dc_instance, f.name, val)
+            setattr(dc_instance, name, val)
+
+
+def _load_trusted_devices(raw: Any) -> List[TrustedDevice]:
+    if not isinstance(raw, list):
+        raise ConfigError("trusted_devices: must be a list")
+
+    allowed = {f.name for f in dataclasses.fields(TrustedDevice)}
+    devices: List[TrustedDevice] = []
+    for index, item in enumerate(raw):
+        path = f"trusted_devices[{index}]"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{path}: must be a mapping")
+        unknown = set(item) - allowed
+        if unknown:
+            key = sorted(unknown)[0]
+            raise ConfigError(f"unknown configuration key: {path}.{key}")
+        devices.append(TrustedDevice(**item))
+    return devices
 
 
 def load_config(path: Optional[str] = None) -> Config:
@@ -481,12 +517,14 @@ def load_config(path: Optional[str] = None) -> Config:
       2. SENTINELPI_CONFIG environment variable
       3. DEFAULT_CONFIG_PATHS list
 
-    Falls back to all-defaults Config if no file is found.
+    Falls back to all-defaults Config only when no explicit or default file is found.
+    Explicit paths and malformed files fail closed with :class:`ConfigError`.
     """
     config = Config()
 
     # Determine file to load
     candidate: Optional[Path] = None
+    explicit = bool(path) or "SENTINELPI_CONFIG" in os.environ
     if path:
         candidate = Path(path)
     elif "SENTINELPI_CONFIG" in os.environ:
@@ -502,33 +540,40 @@ def load_config(path: Optional[str] = None) -> Config:
         return config
 
     if not candidate.exists():
+        if explicit:
+            raise ConfigError(f"configuration file not found: {candidate}")
         logger.warning("Config file %s not found; using defaults.", candidate)
         return config
 
     try:
-        with open(candidate, "r") as fh:
+        with open(candidate, "r", encoding="utf-8") as fh:
             raw = yaml.safe_load(fh)
         if not isinstance(raw, dict):
-            logger.warning("Config file %s is empty or invalid; using defaults.", candidate)
-            return config
+            raise ConfigError(f"configuration file must contain a mapping: {candidate}")
 
         # Populate trusted_devices list specially
         if "trusted_devices" in raw:
-            config.trusted_devices = [
-                TrustedDevice(**d) for d in raw.pop("trusted_devices", [])
-            ]
+            config.trusted_devices = _load_trusted_devices(raw["trusted_devices"])
+            raw = {key: value for key, value in raw.items() if key != "trusted_devices"}
 
-        _merge_dataclass_from_dict(config, raw)
+        explicit_thresholds = raw.get("thresholds")
+        raw_without_thresholds = {key: value for key, value in raw.items() if key != "thresholds"}
+        _merge_dataclass_from_dict(config, raw_without_thresholds)
+
+        # Precedence is defaults -> sensitivity profile -> explicit thresholds.
+        # This lets operators select a broad profile and tune individual values.
+        _apply_sensitivity_profile(config)
+        if explicit_thresholds is not None:
+            if not isinstance(explicit_thresholds, dict):
+                raise ConfigError("thresholds: must be a mapping")
+            _merge_dataclass_from_dict(config.thresholds, explicit_thresholds, "thresholds")
         config._source_path = str(candidate)
         logger.info("Loaded config from %s", candidate)
 
     except yaml.YAMLError as exc:
-        logger.error("Failed to parse config file %s: %s", candidate, exc)
-    except Exception as exc:
-        logger.error("Unexpected error loading config %s: %s", candidate, exc)
-
-    # Apply sensitivity profile multipliers
-    _apply_sensitivity_profile(config)
+        raise ConfigError(f"failed to parse configuration file {candidate}: {exc}") from exc
+    except OSError as exc:
+        raise ConfigError(f"failed to read configuration file {candidate}: {exc}") from exc
 
     return config
 
@@ -584,6 +629,10 @@ def validate_config(config: Config) -> List[ConfigIssue]:
     def check_non_negative_int(path: str, value: Any) -> None:
         if not is_int(value) or value < 0:
             add(path, "must be a non-negative integer")
+
+    def check_positive_int(path: str, value: Any) -> None:
+        if not is_int(value) or value < 1:
+            add(path, "must be a positive integer")
 
     def check_positive_number(path: str, value: Any) -> None:
         if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
@@ -650,10 +699,35 @@ def validate_config(config: Config) -> List[ConfigIssue]:
         add("dashboard.host", "must be a non-empty string")
     check_port("dashboard.port", config.dashboard.port)
 
+    check_port("flow.netflow_port", config.flow.netflow_port)
+    for path, value in (
+        ("flow.netflow_max_exporters", config.flow.netflow_max_exporters),
+        (
+            "flow.netflow_max_observation_domains_per_exporter",
+            config.flow.netflow_max_observation_domains_per_exporter,
+        ),
+        ("flow.netflow_max_templates_per_context", config.flow.netflow_max_templates_per_context),
+        ("flow.netflow_max_records_per_datagram", config.flow.netflow_max_records_per_datagram),
+    ):
+        check_positive_int(path, value)
+    if not isinstance(config.flow.netflow_allowed_exporters, list):
+        add("flow.netflow_allowed_exporters", "must be a list of IP addresses or CIDRs")
+    else:
+        if config.flow.netflow_enabled and not config.flow.netflow_allowed_exporters:
+            add("flow.netflow_allowed_exporters", "must not be empty when NetFlow is enabled")
+        for idx, exporter in enumerate(config.flow.netflow_allowed_exporters):
+            try:
+                ipaddress.ip_network(exporter, strict=False)
+            except (TypeError, ValueError):
+                add(
+                    f"flow.netflow_allowed_exporters[{idx}]",
+                    "must be an IP address or CIDR network",
+                )
+
     if config.monitoring.sensitivity_profile not in {"conservative", "balanced", "aggressive"}:
         add("monitoring.sensitivity_profile", "must be one of: conservative, balanced, aggressive")
-    check_non_negative_int("monitoring.active_discovery_interval_seconds",
-                           config.monitoring.active_discovery_interval_seconds)
+    check_positive_number("monitoring.active_discovery_interval_seconds",
+                          config.monitoring.active_discovery_interval_seconds)
     check_non_negative_int("monitoring.baseline_learning_hours", config.monitoring.baseline_learning_hours)
     check_non_negative_int("monitoring.active_hours_min_known", config.monitoring.active_hours_min_known)
     check_non_negative_int("monitoring.host_profile_min_known_ports",
@@ -705,6 +779,22 @@ def validate_config(config: Config) -> List[ConfigIssue]:
     else:
         for idx, port in enumerate(config.monitoring.honeypot_ports):
             check_port(f"monitoring.honeypot_ports[{idx}]", port)
+    if not isinstance(config.monitoring.file_integrity_paths, list):
+        add("monitoring.file_integrity_paths", "must be a list")
+    else:
+        for idx, path in enumerate(config.monitoring.file_integrity_paths):
+            if not isinstance(path, str) or not path:
+                add(f"monitoring.file_integrity_paths[{idx}]", "must be a non-empty path")
+
+    for path, hour in (("reporting.daily_report_hour", config.reporting.daily_report_hour),):
+        if not is_int(hour) or hour < 0 or hour > 23:
+            add(path, "must be an hour from 0 to 23")
+    if (
+        not is_int(config.reporting.weekly_report_day)
+        or config.reporting.weekly_report_day < 0
+        or config.reporting.weekly_report_day > 6
+    ):
+        add("reporting.weekly_report_day", "must be a day from 0 (Sunday) to 6 (Saturday)")
 
     t = config.thresholds
     check_positive_number("thresholds.port_scan_ports_per_minute", t.port_scan_ports_per_minute)
@@ -788,11 +878,13 @@ def validate_config(config: Config) -> List[ConfigIssue]:
     if config.cluster.role not in {"standalone", "sensor", "collector"}:
         add("cluster.role", "must be one of: standalone, sensor, collector")
     check_severity("cluster.forward_min_severity", config.cluster.forward_min_severity)
+    check_positive_int("cluster.ingest_max_payload_bytes", config.cluster.ingest_max_payload_bytes)
 
     check_non_negative_int("correlation.window_seconds", config.correlation.window_seconds)
     check_non_negative_int("correlation.min_sensors", config.correlation.min_sensors)
     check_non_negative_int("correlation.min_targets", config.correlation.min_targets)
     check_non_negative_int("correlation.cooldown_seconds", config.correlation.cooldown_seconds)
+    check_positive_int("correlation.max_actors", config.correlation.max_actors)
 
     check_non_negative_int("flow.conntrack_interval_seconds", config.flow.conntrack_interval_seconds)
     check_port("flow.netflow_port", config.flow.netflow_port)

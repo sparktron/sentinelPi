@@ -19,7 +19,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from ..models import Alert
 from ..utils import clock
@@ -28,14 +28,19 @@ from ..utils import clock
 # Lifecycle of an action:
 #   planned   - dry-run only, never executes
 #   pending   - armed but awaiting human approval
+#   executing - durably recorded immediately before execution
 #   executed  - ran successfully
 #   failed    - ran but errored
 #   rejected  - a human declined it
 PLANNED = "planned"
 PENDING = "pending"
+EXECUTING = "executing"
 EXECUTED = "executed"
 FAILED = "failed"
 REJECTED = "rejected"
+EXPIRING = "expiring"
+EXPIRED = "expired"
+EXPIRATION_FAILED = "expiration_failed"
 
 
 @dataclass
@@ -53,6 +58,10 @@ class ResponderAction:
     success: bool = False        # did execution succeed?
     error: str = ""              # error message if execution failed
     alert_id: str = ""           # the alert that triggered this action
+    rollback_commands: List[List[str]] = field(default_factory=list)
+    duration_seconds: int = 0
+    expires_at: Optional[datetime] = None
+    expired_at: Optional[datetime] = None
 
 
 class BaseResponder(ABC):
@@ -85,3 +94,7 @@ class BaseResponder(ABC):
         Only ever called by the manager when execution is permitted.
         """
         raise NotImplementedError
+
+    def expire(self, action: ResponderAction) -> Tuple[bool, str]:
+        """Undo a timed action. Responders without expiry support fail closed."""
+        return False, f"{self.name} does not support timed expiration"

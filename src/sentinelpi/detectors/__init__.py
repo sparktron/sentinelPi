@@ -6,6 +6,8 @@ from .connection_detector import ConnectionDetector
 from .dns_detector import DNSDetector
 from .lateral_movement_detector import LateralMovementDetector
 from .auth_log_detector import AuthLogDetector
+from .file_integrity_detector import FileIntegrityDetector
+from .traffic_detector import TrafficSpikeDetector
 
 __all__ = [
     "BaseDetector",
@@ -16,4 +18,6 @@ __all__ = [
     "DNSDetector",
     "LateralMovementDetector",
     "AuthLogDetector",
+    "FileIntegrityDetector",
+    "TrafficSpikeDetector",
 ]

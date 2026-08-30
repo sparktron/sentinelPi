@@ -1,206 +1,380 @@
-# SentinelPi — Code Review
+# SentinelPi Repository-Wide Code Review
 
-_Review date: 2026-06-02 · Scope: full `src/sentinelpi` tree, config, dashboard, storage._
+_Review date: 2026-07-12 · Scope: application code, tests, configuration, deployment,
+operator documentation, and packaging. Corrective findings closed 2026-07-13._
 
-## Overall assessment
+## Executive Summary
 
-This is a genuinely well-structured project. The separation into `capture / detectors /
-baseline / alerts / inventory / storage / ui` is clean, the detector base class is a good
-abstraction, the SQLite layer has real migrations and WAL mode, and there is a meaningful
-test suite. The detection logic (ARP spoofing, port scans, DNS DGA/tunneling, beaconing,
-lateral movement, SSH brute force) is thoughtful and well beyond a toy.
+SentinelPi has a clear modular architecture, useful type checking, and a substantial test suite.
+The reviewed checkout passed all 405 tests as well as Ruff, mypy, and byte-code compilation.
+The review found two critical runtime-wiring defects that made advertised detections inoperative
+in the real service even though their isolated unit tests passed:
 
-The issues below are mostly about **concurrency correctness**, a couple of **broken-by-design
-helpers**, **dashboard hardening**, and **unbounded memory growth** — the things that bite a
-long-running daemon rather than a script.
+1. `PortScanDetector` was never instantiated or registered by `SentinelPi`.
+2. `DeviceTracker` created new-device and ARP-change alerts, but its service loop never sent them
+   to `AlertManager`.
 
-Severity legend: 🔴 critical · 🟠 high · 🟡 medium · ⚪ low/polish.
+**Phase 0 status (2026-07-12): resolved.** The service now registers `PortScanDetector` for event
+and polling inputs, and all inventory polling runs through the standard alert-dispatch wrapper.
+Three service-wiring regressions were added; the full suite now contains 408 tests.
 
----
+**Phase 1 status (2026-07-12): resolved.** Baseline learning age and dirty checkpoints now survive
+restarts; response plans/results/approvals/expirations have a durable ledger; timed iptables and
+nftables blocks reconcile after restart; and watchdog status reports overall and per-feed
+threat-intelligence refresh health. The full suite now contains 418 tests.
 
-## Resolution status (Phase 0)
+**Phase 2 status (2026-07-12): resolved.** Normal startup fails closed, profile overrides are
+predictable, public monitoring switches are wired, default deployments use least privilege, and
+NetFlow/IPFIX ingest has bounded exporter/domain trust state. The full suite now contains 443 tests.
 
-_Updated 2026-06-02. Full suite green at 68 tests._
+**Phase 3 status (2026-07-12): resolved.** Connection signals and long-lived maps are bounded,
+database/persistence paths fail safely, device trust is live and auditable, and collector payloads
+are size- and schema-validated. The full suite now contains 469 tests.
 
-| Item | Status | Notes |
-|------|--------|-------|
-| C1 — detector data races | ✅ Fixed | `BaseDetector` serializes `poll()`/`process_event()` via an `RLock`; subclasses override `_poll`/`_process_event`. Test: `test_detector_concurrency.py`. |
-| C2 — `reverse_dns()` dead off main thread | ✅ Fixed | Replaced `SIGALRM` with a shared `ThreadPoolExecutor` + `future.result(timeout)`. Test: `test_detector_concurrency.py`. |
-| H1 — unbounded dedup/suppression memory | ✅ Fixed | `AlertManager._prune_dedup` + `BaseDetector._evict_expired_times`/`_evict_idle_deques` wired into each detector `_poll`. Test: `test_memory_bounding.py`. |
-| H2 — dashboard auth off by default | ✅ Fixed | Auto-generated token, header-only, `hmac.compare_digest`, random `SECRET_KEY`, fail-closed non-loopback bind. Test: `test_dashboard_auth.py`. |
-| H4 — baseline variance math + atomicity | ✅ Fixed | `update_hourly_baseline` is now an atomic upsert snapshotting the authoritative in-memory `RunningStats` (single source of truth). Test: `test_baseline_persistence.py`. |
-| (bug) DB init crash | ✅ Fixed | `_conn()` guarded on `conn.in_transaction` — `executescript()` in migrations implicitly commits. Test: `test_db_migrations.py`. |
-| M1 — `datetime.utcnow()` naïve/deprecated; timezone-aware `clock` | ✅ Fixed | New `utils/clock.py` (aware UTC, injectable `FixedClock`). All `utcnow()` routed through `clock.now()`; dropped `isoformat() + "Z"` double-labeling. Quiet-hours intentionally stays local wall-clock. Test: `test_clock.py`. |
-| H3 — Flask dev server / no clean shutdown | ✅ Fixed | `DashboardServer` prefers waitress (graceful `stop()` via `server.close()` + thread join); falls back to the dev server with a warning when waitress is absent. Test: `test_dashboard_server.py`. |
-| M3 — dead no-op + fragile `_alert_manager` attr | ✅ Fixed | `build_detector_thread` takes `alert_manager` explicitly; removed the `detector.config` no-op and the dynamically-attached attribute. Test: `test_polish_fixes.py`. |
-| M4 — `mark_device_suspicious` locking | ✅ Verified | Already guarded by the `DeviceTracker` `RLock`; no change needed. |
-| M5 — `except Exception: pass` hides failures | ✅ Fixed | All 8 silent blocks now log at debug (incl. the reverse-DNS swallow in `_create_device`); notifier workers distinguish `queue.Empty` from real send failures (logged at warning). |
-| M6 — capture interface edge cases | ✅ Fixed | `PacketCapture.start()` fails clearly on empty interfaces, prunes unknown ones, bails if none remain. Test: `test_polish_fixes.py`. |
-| L1/L2 — dashboard param 500s | ✅ Fixed | `/api/alerts` validates int (`_bounded_int`, clamped) and enum params, returning 400 with guidance. Test: `test_polish_fixes.py`. |
-| L4 — degraded-mode startup banner | ✅ Fixed | `SentinelPi._log_capabilities()` logs each optional feature's status and a degraded-mode warning. Test: `test_polish_fixes.py`. |
-| M2 — dedup keyed on `alert.timestamp` vs ingest time | ⬜ Open (decision) | Needs a product call on event-time vs ingest-time suppression; not a clear bug today. |
-| L3 — dedup cache not warmed at startup | ⬜ Open (low) | The DB slow-path in `_is_duplicate` already covers cross-restart dedup; warming is an optimization. |
-| L6 — structured (JSON) logs | ⬜ Open (enhancement) | |
+**Phase 4 status (2026-07-13): in progress.** The runtime wiring manifest/capability matrix is
+shipped across startup, preflight, status, and tests. The full suite now contains 475 tests.
 
----
+**Corrective finding status (2026-07-13): complete.** The final open finding, idempotent logging
+setup, is resolved with owned-handler replacement and a repeated-setup regression. The full suite
+now contains 476 tests. The remaining Phase 4 items are feature work rather than unresolved fixes.
 
-## 🔴 Critical
+Severity legend: **Critical** = a core advertised security behavior is absent or bypassed in normal
+operation; **High** = material detection, response, security, or operator-trust failure;
+**Medium** = correctness, resilience, or maintainability problem with narrower impact;
+**Low** = polish or defensive hardening.
 
-### C1. Detectors are mutated from two threads with no locking (data races)
-`SentinelPi.__init__` builds one instance per detector. Each of `ARPDetector`,
-`ConnectionDetector`, `BeaconDetector`, `LateralMovementDetector` is then registered **both**:
+## Findings
 
-- in `_start_packet_capture._route_events` → calls `det.process_event(...)` on the **EventRouter** thread, and
-- in `_start_polling_threads` → calls `det.poll(...)` on a **per-detector polling** thread.
+### Critical
 
-Their internal state is plain `dict` / `collections.deque` (e.g. `PortScanDetector._scan_ports`,
-`ARPDetector._ip_to_mac`, `_reply_times`). `_record_connection` appends to a deque while
-`_check_port_scan` iterates the same deque — from a different thread. Expect intermittent
-`RuntimeError: deque mutated during iteration`, `dict changed size during iteration`, and
-silently corrupted counts (i.e. **missed or phantom detections** — the worst failure mode for
-a security tool).
+#### C1. Port-scan detection was not wired into the running service — Resolved
 
-**Fix:** give each detector a `threading.Lock` and guard all state mutation/iteration, or
-serialize event + poll handling through a single per-detector work queue. The lock approach is
-smallest: wrap the bodies of `process_event` and `poll` in `with self._lock:`.
+**Original issue:** `PortScanDetector` had implementation and unit tests, but `main.py` neither
+imported nor constructed it. It was absent from both the packet/flow event-detector list and the
+polling list, so vertical scans and the detector's host-sweep logic were never evaluated.
 
-### C2. `reverse_dns()` can never work — `signal` only runs in the main thread
-`utils/network.py::reverse_dns` installs a `SIGALRM` handler via `signal.signal()`. Python only
-allows that on the **main thread**. It is called from `DeviceTracker._create_device`, which runs
-on the `DeviceTracker` polling thread → raises `ValueError: signal only works in main thread`.
-The caller swallows it (`except Exception: pass`), so hostnames are **always blank** and the
-timeout feature is dead.
+**Evidence:** `src/sentinelpi/main.py:60-71`, `src/sentinelpi/main.py:198-210`,
+`src/sentinelpi/main.py:405-424`, and `src/sentinelpi/main.py:521-530` versus
+`src/sentinelpi/detectors/port_scan_detector.py`.
 
-**Fix:** drop the signal hack. Use `socket.setdefaulttimeout()` around `gethostbyaddr`, or better,
-do the lookup in a `concurrent.futures.ThreadPoolExecutor` with `future.result(timeout=...)`, or
-use `dnspython` with an explicit timeout. This also removes a per-call global-handler swap that
-is itself not thread-safe.
+**Implemented change:** one shared `PortScanDetector` is instantiated and included in both
+`_build_event_detectors()` and `_build_pollers()`. The service-wiring regression asserts both paths.
 
----
+#### C2. DeviceTracker alerts were generated but never dispatched — Resolved
 
-## 🟠 High
+**Original issue:** `DeviceTracker.poll()` returned alerts and also appended them to
+`_pending_alerts`. `run_forever()` discarded the return value, while the main service special-cased
+the tracker instead of using the normal detector wrapper. Nothing consumed the pending buffer.
 
-### H1. Unbounded memory growth in `AlertManager._recent_dedup`
-`_recent_dedup: Dict[str, datetime]` gains a key for every distinct `dedup_key` ever fired and is
-**never pruned**. On a busy network (per-domain, per-host, per-flow keys) this grows without
-bound for the life of the daemon. Same pattern exists in the detector suppression dicts
-(`_last_alert`, per-key cooldown maps) and `defaultdict(lambda: deque(...))` flow maps that only
-shrink via `_cleanup_idle_flows` (beacon) but not elsewhere.
+**Evidence:** `src/sentinelpi/inventory/device_tracker.py:92-134`,
+`src/sentinelpi/inventory/device_tracker.py:387-392`, and `src/sentinelpi/main.py:521-544`.
 
-**Fix:** prune `_recent_dedup` opportunistically (e.g. in `_handle_alert`, drop entries older than
-the max category cooldown), or replace with a TTL cache (`cachetools.TTLCache`). Audit each
-detector for an eviction path; `PortScanDetector._last_alert` and the sweep/scan maps need bounding.
+**Implemented change:** `_start_polling_threads()` now drives every poller, including
+`DeviceTracker`, through `build_detector_thread()`, which sends returned alerts to `AlertManager`.
+The unused pending buffer was removed, and a regression proves tracker alerts reach the manager.
 
-### H2. Dashboard ships with authentication off by default
-`DashboardConfig.access_token` defaults to `""`, and `require_token` returns the handler
-unguarded when the token is empty. Bound to `127.0.0.1:8888` that's tolerable, but the dashboard
-exposes the entire network intelligence picture (device inventory, suspicious hosts, DNS, alerts)
-and the trust/ack/mute **mutation** endpoints. Anyone who flips `host` to `0.0.0.0` (a natural
-thing to do to view it from a laptop) instantly has an open, unauthenticated control panel.
+### High
 
-**Fixes:**
-- Generate a random token on first run if none is configured, and log it once.
-- Refuse to bind to a non-loopback host when `access_token` is empty (fail closed).
-- Constant-time compare: `hmac.compare_digest(provided, token)` instead of `!=`.
-- Don't accept the token via `?token=` query param (it lands in logs/history); header only.
-- Replace the hardcoded `app.config["SECRET_KEY"] = "sentinelpi-dashboard-key"` with a random
-  per-process secret.
+#### H1. Every restart re-entered the full baseline learning period — Resolved
 
-### H3. Flask dev server used as the long-lived server, with no real shutdown
-`DashboardServer.start` runs `app.run(...)` (Werkzeug dev server) in a daemon thread, and
-`stop()` is a no-op log line. For an always-on monitor this is the weak point: no graceful
-drain, single-process, not hardened.
+**Issue:** hourly statistics, destinations, and domains are rehydrated, but the learning clock is
+always reset to process start. With the default 24-hour period, every service restart suppresses
+connection spikes, unusual countries/hours, new admin pairs, host-profile anomalies, and some DNS
+signals for another day. Frequent updates or crashes can keep a sensor permanently learning.
 
-**Fix:** run under `waitress` (pure-Python, trivial dependency, production-grade) and keep a handle
-you can actually stop, or document explicitly that the dashboard is localhost-dev-only and put it
-behind a reverse proxy for anything else.
+**Evidence:** `src/sentinelpi/baseline/engine.py:128-172` and calls to `baseline.is_learning` across
+the connection, DNS, geo-country, active-hours, lateral-movement, and host-profile detectors.
 
-### H4. `Database.update_hourly_baseline` — wrong variance math + non-atomic read/modify/write
-Two problems:
-1. The "Welford" update is not Welford. It does
-   `new_var = old_var + ((x-old_avg)*(x-new_avg) - old_var)/n`, which is an EWMA-style decay, not
-   the running sample variance. It biases stddev and will mis-scale z-scores used for spike
-   detection. Either store `M2` (sum of squared deviations) and compute `var = M2/n` like the
-   in-memory `RunningStats` already does correctly, or commit to a documented EWMA and stop calling
-   it Welford.
-2. The `SELECT` runs on the autocommit connection and the `UPDATE`/`INSERT` runs inside a separate
-   `self._conn()` transaction. Check-then-act is not atomic; concurrent writers (or a future move
-   to multi-threaded baseline updates) lose updates. Do the read and write in one transaction, or
-   use an `INSERT ... ON CONFLICT DO UPDATE` with the arithmetic expressed in SQL.
+**Implemented change:** schema v9 persists the learning epoch in `app_state`; upgrades seed it from
+the oldest existing baseline observation. Restart tests prove mature baselines remain active.
 
-Note there are now **two parallel baseline implementations** — the in-memory `RunningStats`
-(correct) in `BaselineEngine` and this DB one (incorrect). Decide which is authoritative; the
-divergence is a latent correctness bug.
+#### H2. Firewall block duration was accepted but ignored — Resolved
 
----
+**Issue:** `response.block_duration_seconds` is documented and validated, but firewall execution
+only inserts permanent rules. No timer, expiry metadata, delete command, or startup reconciliation
+exists. A configured one-hour quarantine can last until an operator manually removes the rule or
+the firewall is rebuilt.
 
-## 🟡 Medium
+**Evidence:** `src/sentinelpi/config/manager.py:316-322` and
+`src/sentinelpi/responders/firewall.py:73-117`.
 
-### M1. `datetime.utcnow()` used throughout — deprecated and naïve
-`utcnow()` returns a naïve datetime and is deprecated in 3.12+. Mixed with `.isoformat() + "Z"`
-in the dashboard, which double-labels timezone inconsistently. Standardize on
-`datetime.now(timezone.utc)` and store/emit ISO-8601 with offset. This matters because alert
-correlation and quiet-hours logic depend on consistent time semantics.
+**Implemented change:** successful firewall actions receive execution-relative expirations in the
+durable action ledger. Reconciliation runs at startup and during maintenance; iptables deletes are
+idempotent and nftables rules use persisted action markers to resolve handles after restart.
 
-### M2. Quiet-hours / dedup keyed on `alert.timestamp`, not wall clock
-`_is_duplicate` computes `cutoff = alert.timestamp - cooldown`. If a detector backfills events
-(e.g. auth-log tailing after a restart) timestamps may be in the past, defeating dedup or quiet
-hours. Confirm every alert's `timestamp` is event-time and decide whether suppression should key on
-ingest-time instead.
+#### H3. Threat-intelligence refresh failures were recorded as successes — Resolved
 
-### M3. Dead code / no-op in `build_detector_thread`
-```python
-detector_instance.config  # access config for alert_manager ref
-```
-This statement does nothing (the comment is misleading — the manager comes from the `getattr`
-below). Remove it. Also, relying on a dynamically-attached `_alert_manager` attribute (set in
-`SentinelPi.__init__`) is fragile; pass the alert manager into the detector constructor or into
-`build_detector_thread` explicitly so the wiring is type-checked and obvious.
+**Issue:** `ThreatIntelService.refresh()` returns `False` when every fetch/cache write fails. The
+refresh loop ignores that result and always records watchdog success unless an exception escapes.
+The service can use stale or empty feeds indefinitely while `/api/status` reports healthy refreshes.
 
-### M4. `AlertManager._handle_alert` holds the lock only for dedup, not for stats consistency
-Counters `_total_processed/_suppressed/_fired` are updated under the lock, but the DB save,
-suspicion-score update, and notifier fan-out happen outside it (correctly, for latency). Fine —
-but `mark_device_suspicious` and notifier sends are themselves touching shared state; verify
-`DeviceTracker.mark_device_suspicious` is internally locked (it mutates the device map from
-multiple detector threads).
+**Evidence:** `src/sentinelpi/intel/threat_feeds.py:231-256` and
+`src/sentinelpi/main.py:549-570`.
 
-### M5. Broad `except Exception: pass` hides real failures
-`_create_device` swallows all reverse-DNS errors (masking C2 entirely). Several detectors wrap
-whole `poll()` bodies. At minimum log at `debug` with the exception so failures are diagnosable;
-silent `pass` in a security tool means detectors can quietly stop working.
+**Implemented change:** the refresh loop now honors the service result and sends per-feed attempt,
+success, error, age, and staleness state to the watchdog. Total and partial failures are covered.
 
-### M6. Packet-capture interface selection edge cases
-`AsyncSniffer(iface=self.interfaces if len>1 else self.interfaces[0])` will `IndexError` if
-`interfaces` is empty, and there's no validation that configured interfaces exist. Validate at
-startup and emit a clear config error.
+#### H4. Several public configuration switches have no runtime effect — Resolved
 
----
+**Issue:** the repository exposes and documents behaviors that are not implemented or not wired:
 
-## ⚪ Low / polish
+- `monitoring.dns_monitoring_enabled` never disables DNS capture/detection.
+- `monitoring.active_discovery_enabled` and its interval are never scheduled.
+- `monitoring.file_integrity_enabled` is only checked by preflight; no runtime hashing occurs.
+- `reporting.daily_report_enabled/hour` and weekly equivalents are never scheduled or delivered;
+  only an on-demand dashboard JSON helper exists.
+- traffic baseline methods and the `TRAFFIC_SPIKE` category exist, but no runtime component reads
+  interface counters or emits traffic-spike alerts.
 
-- **L1.** `request.args.get("limit", 100)` / `hours` are `int()`-cast with no try/except — a
-  non-numeric `?limit=abc` 500s the endpoint. Validate and clamp.
-- **L2.** `api_alerts` casts `Severity(severity)` / `AlertStatus(status)` directly; an invalid
-  value raises `ValueError` → 500. Return 400 with a helpful message.
-- **L3.** `_recent_dedup` cache is populated from DB on dedup hit but never warmed at startup, so
-  the first occurrence of each key after restart always fires even if recently alerted (the DB
-  slow-path covers it, but only if `get_recent_dedup_keys` is hit — confirm it's called before the
-  in-memory miss returns).
-- **L4.** No `requirements`/extras pinning visible for `scapy`, `flask`, `maxminddb`; all are
-  imported behind `*_AVAILABLE` flags (good) but the degraded mode should surface a startup banner
-  listing what's disabled.
-- **L5.** Tests cover detectors and the alert manager but there's no test for the concurrency in
-  C1, the dashboard auth in H2, or DB migrations. Add regression tests as you fix the above.
-- **L6.** `setup_logging` + per-class `logging.getLogger` is good; consider structured (JSON) logs
-  for the file handler so the dashboard/SIEM can parse them.
+These silent no-ops undermine operator trust because `--check-config` accepts them and the README
+describes several as shipped.
 
----
+**Evidence:** definitions in `src/sentinelpi/config/manager.py:168-195` and
+`src/sentinelpi/config/manager.py:280-285`; no runtime references outside preflight/tests for the
+listed settings; `BaselineEngine.record_traffic()`/`check_traffic_spike()` have no production caller.
 
-## Suggested fix order
+**Implemented change:** DNS disable now changes both capture and detector routing; active discovery
+feeds bounded ARP sweeps through inventory; file-integrity polling hashes configured files;
+daily/weekly report periods are restart-safe; and interface byte counters drive traffic-spike
+baselines. Unit and service-wiring regressions cover each runtime path.
 
-1. **C1** (lock the detectors) and **C2** (fix reverse DNS) — correctness of detection itself.
-2. **H1** (memory) and **H2** (dashboard auth) — daemon longevity and exposure.
-3. **H4** (baseline math) — accuracy of the anomaly scoring everything else feeds on.
-4. **H3 / M-series / L-series** — hardening and polish.
+#### H5. Default deployments grant more network privilege than passive capture needs — Resolved
 
-Each of C1, C2, H1, H2 is a small, self-contained PR with an accompanying test.
+**Issue:** the systemd unit and Docker Compose grant `CAP_NET_ADMIN` unconditionally even though
+passive packet capture only needs `CAP_NET_RAW` and active response is disabled by default.
+`CAP_NET_ADMIN` permits broad firewall, route, and interface changes, increasing impact if the
+daemon or a dependency is compromised.
+
+The default hosts-file sinkhole also conflicts with `ProtectSystem=strict`: only `/var/lib` and
+`/var/log` are writable, while the configured sinkhole path is under `/etc/sentinelpi`. Thus the
+service is simultaneously overprivileged at the network layer and unable to use its default
+file-backed responder.
+
+**Evidence:** `systemd/sentinelpi.service:15-20`, `systemd/sentinelpi.service:46-62`,
+`docker-compose.yml`, and default `response.dns_sinkhole_hosts_file` in
+`src/sentinelpi/config/manager.py:324-327`.
+
+**Implemented change:** default systemd and Compose manifests grant `NET_RAW` only. Explicit
+systemd/Compose active-response overrides add `NET_ADMIN`. The default hosts-file sinkhole now lives
+under `/var/lib/sentinelpi`, and preflight verifies the configured target (or its parent) is
+writable. Static manifest and preflight regressions cover the boundary.
+
+#### H6. NetFlow/IPFIX ingestion has no exporter trust boundary — Resolved
+
+**Issue:** when enabled, the UDP collector accepts datagrams from any source address and feeds them
+directly into baselines and detectors. An untrusted LAN host can inject false flows, create alerts,
+poison learned profiles, or consume memory through exporter/template churn. Template caches are
+also keyed as `(exporter, 0)` even though the docstring promises exporter plus source/observation
+domain, so template IDs can collide for multi-domain exporters.
+
+**Evidence:** `src/sentinelpi/capture/flow_ingest.py:436-459` and
+`src/sentinelpi/capture/flow_ingest.py:489-517`.
+
+**Implemented change:** enabled collectors require an exporter IP/CIDR allowlist. NetFlow v9 source
+IDs and IPFIX observation-domain IDs are included in LRU cache keys; exporter, domain, template, and
+record counts are capped. Rejected, malformed, and cache-eviction counters are exposed on the
+collector. Authenticated transport via a local collector/proxy remains a stronger optional layer.
+
+### Medium
+
+#### M1. Normal daemon startup does not validate configuration and explicit load errors fail open — Resolved
+
+**Issue:** validation only runs for `--check-config`/`--check`. Normal startup constructs
+`SentinelPi` directly from `load_config()`. A missing explicit path, malformed YAML, or non-mapping
+document logs a warning/error and silently uses defaults. Unknown keys are ignored, so a typo can
+pass `--check-config` while the intended control remains at its default.
+
+**Evidence:** `src/sentinelpi/config/manager.py:454-533` and
+`src/sentinelpi/main.py:846-870`.
+
+**Implemented change:** explicit/env-config failures are fatal, permissive defaults remain only when
+no config was requested, unknown keys report full paths, and normal startup validates before any
+subsystem or logging side effects. Typo, missing-file, malformed-file, and normal-startup
+regressions cover the boundary.
+
+#### M2. Sensitivity profiles overwrite explicit threshold values — Resolved
+
+**Issue:** after YAML merge, conservative/aggressive profiles hard-set six thresholds. Operators
+cannot use a profile and then override one threshold, despite the sample config saying thresholds
+can be overridden.
+
+**Evidence:** `src/sentinelpi/config/manager.py:530-561` and the threshold comments in
+`config/sentinelpi.yaml`.
+
+**Implemented change:** configuration loading now applies defaults -> profile values -> explicit
+YAML threshold overrides. Regressions prove an explicit value wins while unspecified thresholds
+retain the selected profile, and the precedence is documented in the README.
+
+#### M3. SYN-ACK packets are treated as connection initiations — Resolved
+
+**Issue:** the BPF filter captures every TCP packet with SYN set, including SYN-ACK. The port-scan
+detector checks only for `"S"`, not the absence of `"A"`. Once C1 is fixed, server replies can be
+recorded as reverse connection attempts and can pollute scan and host-profile state.
+
+**Evidence:** `src/sentinelpi/capture/packet_capture.py:84-90`,
+`src/sentinelpi/capture/packet_capture.py:298-328`, and
+`src/sentinelpi/detectors/port_scan_detector.py:48-57`.
+
+**Implemented change:** the BPF and parser now accept TCP SYN without ACK only. A bounded capture
+cache collapses retransmitted SYNs once per 5-tuple/60-second window before event routing, while the
+port-scan detector also rejects synthetic SYN-ACK events. Regressions cover `S`, `SA`, retransmits,
+expiry, and the cache ceiling.
+
+#### M4. Incident-correlation actor maps can grow without bound — Resolved
+
+**Issue:** each actor deque is capped at 500 events, but actors themselves are never evicted from
+`_events`, and `_last_incident` is never pruned. Unique spoofed or forwarded actors therefore grow
+both dictionaries for the life of the collector.
+
+**Evidence:** `src/sentinelpi/alerts/correlator.py:49-56` and
+`src/sentinelpi/alerts/correlator.py:70-106`.
+
+**Implemented change:** periodic cleanup removes empty actor deques and expired cooldowns. A
+configurable `correlation.max_actors` ceiling evicts least-recently-seen actors deterministically,
+and `/api/status` exposes tracked state plus eviction/expiry counters. High-cardinality and
+multi-window regressions cover the bounds.
+
+#### M5. Database connection storage is global across Database instances — Resolved
+
+**Issue:** module-level `_thread_local.conn` is not keyed by `Database` instance or path. Creating
+two `Database` objects on the same thread can make the second reuse the first database's connection.
+This is surprising in tests, maintenance commands, and future multi-database use.
+
+**Evidence:** `src/sentinelpi/storage/database.py:33-34` and
+`src/sentinelpi/storage/database.py:58-75`.
+
+**Implemented change:** every `Database` now owns its own `threading.local()` namespace. A regression
+writes distinct state to two database paths on one thread and proves closing one instance does not
+close or redirect the other.
+
+#### M6. Alert processing can execute a response after audit persistence fails — Resolved
+
+**Issue:** a failed `save_alert()` is logged, but notification, suspicion changes, active response,
+and correlation continue, and `_handle_alert()` still returns `True`. An armed response can modify
+the host without a durable alert record, weakening the audit trail and making retries ambiguous.
+
+**Evidence:** `src/sentinelpi/alerts/manager.py:164-213`.
+
+**Implemented change:** alert persistence is now a fail-closed boundary before scoring,
+notification, correlation, or response. Failed dedup reservations are released for retry and are
+counted separately from suppressed/dispatched alerts. Response plans and an `executing` transition
+must both be durable before a command can run; approvals, rejections, and expiration also retain
+their prior state when the required write fails. Both paths emit critical logs and store durable
+degraded/recovered health in `app_state`, surfaced by the dashboard status payload after restart.
+
+#### M7. Response approvals and action history disappeared on restart — Resolved
+
+**Issue:** pending and recent response actions are in-memory collections only. A restart loses
+pending approvals and the dashboard audit history, while already-applied firewall/sinkhole effects
+may remain. This also blocks safe implementation of timed rollback.
+
+**Evidence:** `src/sentinelpi/responders/manager.py:36-46` and
+`src/sentinelpi/responders/manager.py:80-150`.
+
+**Implemented change:** schema v10/v11 stores response plans, commands, rollback commands, status,
+results, duration, and expiration timestamps. Pending actions bind to configured responders after
+restart, and executed/rejected/expired states remain available in recent history.
+
+#### M8. The dashboard “trust device” action does not reduce detector noise — Resolved
+
+**Issue:** the endpoint mutates a `Device` object and database flag, but detectors consult static
+IP/domain/port whitelists, and `DeviceTracker` snapshots trusted IP/MAC sets at construction. The
+route's docstring promises reduced noise without establishing a runtime suppression policy. It also
+mutates the object returned by `get_device()` outside the tracker's lock.
+
+**Evidence:** `src/sentinelpi/ui/dashboard.py:431-440` and trusted-set initialization/use in
+`src/sentinelpi/inventory/device_tracker.py`.
+
+**Implemented change:** dashboard trust/untrust now calls a locked `DeviceTracker` policy operation.
+Trust is durable by device MAC, survives address changes/restarts, and appends actor/timestamp audit
+events. Connection volume/destination, active-hours, host-profile, new-country, and new-device noise
+consult the live policy; security and reputation detections remain active. Configured trust cannot
+be removed through the dashboard and runtime trust has a matching untrust action.
+
+#### M9. Baseline snapshots could lose the last nine samples at shutdown — Resolved
+
+**Issue:** connection statistics persist only on every tenth update, and shutdown has no baseline
+flush. A crash or clean stop between checkpoints loses recent state; lightly observed hour/day
+buckets may never persist at all.
+
+**Evidence:** `src/sentinelpi/baseline/engine.py:178-199` and `SentinelPi._shutdown()`.
+
+**Implemented change:** connection baseline buckets are marked dirty, periodic ten-sample
+checkpoints clear matching snapshots safely, and graceful shutdown flushes all remaining dirty rows
+after worker threads stop and before SQLite closes.
+
+### Low
+
+#### L1. Forwarded alert parsing can turn authenticated malformed input into a 500 — Resolved
+
+**Issue:** `alert_from_dict()` directly casts confidence with `float()` and converts `extra` with
+`dict()`. Invalid authenticated collector payloads can raise instead of returning a structured 400.
+
+**Implemented change:** collector requests have a configurable hard body limit and validate wrapper
+types, enums, ISO timestamps, confidence ranges, per-field string lengths, and bounded `extra`
+depth/item/value sizes before constructing an `Alert`. Malformed JSON, unsupported content types,
+oversized bodies, invalid fields, and authentication failures return structured JSON 4xx errors.
+
+#### L2. Logging setup is not idempotent — Resolved
+
+**Issue:** each `SentinelPi` construction adds root handlers without checking existing handlers.
+Repeated app construction in one process duplicates log output and keeps file descriptors open.
+
+**Implemented change:** logging setup marks the console and rotating-file handlers it owns. A
+subsequent setup removes and closes those handlers before installing replacements while preserving
+handlers owned by an embedding process or test harness. A regression covers repeated setup, file
+closure, and foreign-handler preservation.
+
+## Recommended Feature Work
+
+These additions follow directly from the defects and current architecture, in priority order:
+
+1. **Runtime wiring manifest and capability status — Shipped 2026-07-13.** One ordered registry now
+   describes every input, inventory component, detector, notifier, responder, and service. It drives
+   event/poll routing, appears in preflight and `/api/status`, tracks lifecycle/activity, and is
+   covered by binding tests so a configured routed component cannot remain silently absent.
+2. **Durable response ledger and reconciliation.** Persist approvals, executions, expiry, rollback,
+   and command output; reconcile firewall/DNS/ARP state after restart. This unlocks reliable timed
+   quarantine and a real audit trail.
+3. **Baseline lifecycle controls.** Persist learning completion, show sample readiness per detector,
+   allow an operator to freeze/reset selected baseline dimensions, and detect stale or poisoned
+   baselines.
+4. **Authenticated sensor/flow identity.** Give each sensor/exporter a distinct credential and
+   identity binding, add replay protection and payload limits, and stop relying on one shared key or
+   unauthenticated UDP source addresses.
+5. **Detection-quality fixtures from packet captures.** Add small sanitized PCAP/flow fixtures for
+   SYN/SYN-ACK/retransmit behavior, DNS query/response direction, IPv6, UDP, NetFlow observation
+   domains, and service-level wiring. Unit-generated dataclasses currently miss several integration
+   failures.
+6. **Operator policy management.** Turn trust/whitelist/mute into one durable policy model with
+   audit history, expiry, preview of affected detectors, and UI/API support for undo.
+7. **Reliable notification delivery.** Add retry with bounded exponential backoff, per-channel
+   delivery status, queue-depth/drop metrics, and an optional dead-letter store for high/critical
+   alerts.
+8. **Scheduled reports that are actually delivered.** Build daily/weekly scheduling on the existing
+   report payload, select delivery channels, persist last-run state, and handle timezone/DST and
+   missed-run recovery.
+
+## Suggested Fix Order
+
+1. ~~C1 and C2 with service-level regression tests.~~ Completed 2026-07-12.
+2. ~~H1, H2, and H3 for detection/response correctness across restarts.~~ Completed 2026-07-12.
+3. ~~H4 and M1 so configuration and documentation tell the truth.~~ Completed 2026-07-12.
+4. ~~H5, H6, M6, and M7 for privilege boundaries and response audit safety.~~ Completed 2026-07-12.
+5. ~~Remaining medium/low corrective findings.~~ Completed 2026-07-13. Feature work continues in
+   Phase 4.
+
+## Validation Performed
+
+- Initial review: `python -m pytest -q` — **405 passed** on Python 3.10.12.
+- Phase 0 implementation: `python -m pytest -q` — **408 passed** on Python 3.10.12.
+- Phase 1 implementation: `python -m pytest -q` — **418 passed** on Python 3.10.12.
+- Corrective closeout: `python -m pytest -q` — **476 passed** on Python 3.10.12.
+- `ruff check src tests` — passed.
+- `mypy` — passed for the configured `src/` scope (65 source files).
+- `python -m compileall -q src tests` — passed.
+- Manual static trace of all production modules, service startup/shutdown wiring, public config
+  fields, deployment manifests, responders, dashboard APIs, persistence, and tests.
+
+The initial review changed documentation only. Phase 0 and Phase 1 implementation status and
+validation were appended as the corrective work landed on 2026-07-12.

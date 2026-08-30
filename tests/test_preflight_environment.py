@@ -68,6 +68,21 @@ def test_environment_probes_firewall_binary():
     assert "not on PATH" in by_name["env:firewall"].detail
 
 
+def test_environment_checks_configured_sinkhole_target(tmp_path):
+    config = Config()
+    config.monitoring.packet_capture_enabled = False
+    config.monitoring.auth_log_enabled = False
+    config.response.enabled = True
+    config.response.dns_sinkhole_enabled = True
+    config.response.dns_sinkhole_backend = "hosts"
+    config.response.dns_sinkhole_hosts_file = str(tmp_path / "sinkhole.hosts")
+
+    result = _results_by_name(_check_environment(config))["env:dns-sinkhole"]
+
+    assert result.status == "ok"
+    assert str(tmp_path / "sinkhole.hosts") in result.detail
+
+
 def test_packet_capture_warns_when_only_dumpcap_present_but_scapy_missing(monkeypatch):
     """dumpcap present but scapy unavailable must still warn — daemon uses scapy."""
     import shutil

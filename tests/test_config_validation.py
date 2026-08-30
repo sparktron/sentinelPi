@@ -4,7 +4,9 @@ import subprocess
 import sys
 import os
 
-from sentinelpi.config.manager import Config, validate_config
+import pytest
+
+from sentinelpi.config.manager import Config, ConfigError, load_config, validate_config
 from sentinelpi.config.preflight import run_preflight
 
 
@@ -36,6 +38,10 @@ def test_validate_config_rejects_invalid_ports_and_enums():
     config.monitoring.self_monitoring_queue_warn_ratio = 1.5
     config.notifications.webhook_min_severity = "urgent"
     config.response.firewall_backend = "pf"
+    config.reporting.daily_report_hour = 24
+    config.reporting.weekly_report_day = 7
+    config.flow.netflow_enabled = True
+    config.flow.netflow_allowed_exporters = ["not-an-exporter"]
 
     paths = _issue_paths(config)
 
@@ -44,6 +50,26 @@ def test_validate_config_rejects_invalid_ports_and_enums():
     assert "monitoring.self_monitoring_queue_warn_ratio" in paths
     assert "notifications.webhook_min_severity" in paths
     assert "response.firewall_backend" in paths
+    assert "reporting.daily_report_hour" in paths
+    assert "reporting.weekly_report_day" in paths
+    assert "flow.netflow_allowed_exporters[0]" in paths
+
+
+def test_validate_config_requires_netflow_exporter_allowlist():
+    config = Config()
+    config.flow.netflow_enabled = True
+
+    assert "flow.netflow_allowed_exporters" in _issue_paths(config)
+
+    config.flow.netflow_allowed_exporters = ["192.168.1.1", "10.0.0.0/24"]
+    assert "flow.netflow_allowed_exporters" not in _issue_paths(config)
+
+
+def test_validate_config_requires_positive_collector_payload_limit():
+    config = Config()
+    config.cluster.ingest_max_payload_bytes = 0
+
+    assert "cluster.ingest_max_payload_bytes" in _issue_paths(config)
 
 
 def test_validate_config_rejects_invalid_siem_settings():
@@ -169,6 +195,104 @@ def test_check_config_exits_nonzero_for_invalid_yaml(tmp_path):
     assert "network.subnets[0]" in result.stdout
     assert "dashboard.port" in result.stdout
     assert "monitoring.sensitivity_profile" in result.stdout
+
+
+def test_load_config_rejects_explicit_missing_file(tmp_path):
+    missing = tmp_path / "missing.yaml"
+
+    with pytest.raises(ConfigError, match="configuration file not found"):
+        load_config(str(missing))
+
+
+def test_load_config_rejects_malformed_yaml(tmp_path):
+    config_path = tmp_path / "bad.yaml"
+    config_path.write_text("network: [", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="failed to parse configuration file"):
+        load_config(str(config_path))
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "unknown_path"),
+    [
+        ("dashbord:\n  enabled: false\n", "dashbord"),
+        ("monitoring:\n  dns_monitering_enabled: false\n", "monitoring.dns_monitering_enabled"),
+        ("trusted_devices:\n  - ip: 192.0.2.1\n    typo: value\n", "trusted_devices[0].typo"),
+    ],
+)
+def test_load_config_rejects_unknown_keys(tmp_path, yaml_text, unknown_path):
+    config_path = tmp_path / "unknown.yaml"
+    config_path.write_text(yaml_text, encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=unknown_path.replace("[", r"\[").replace("]", r"\]")):
+        load_config(str(config_path))
+
+
+def test_explicit_thresholds_override_profile_values(tmp_path):
+    config_path = tmp_path / "profile.yaml"
+    config_path.write_text(
+        "monitoring:\n"
+        "  sensitivity_profile: aggressive\n"
+        "thresholds:\n"
+        "  port_scan_ports_per_minute: 12\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.thresholds.port_scan_ports_per_minute == 12
+    assert config.thresholds.connection_spike_factor == 2.0
+    assert config.thresholds.ssh_failures_threshold == 5
+
+
+def test_profile_values_apply_when_thresholds_are_not_explicit(tmp_path):
+    config_path = tmp_path / "profile.yaml"
+    config_path.write_text(
+        "monitoring:\n  sensitivity_profile: conservative\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(str(config_path))
+
+    assert config.thresholds.port_scan_ports_per_minute == 30
+    assert config.thresholds.lateral_movement_dest_threshold == 10
+
+
+def test_normal_startup_rejects_invalid_config_before_initialization(tmp_path):
+    config_path = tmp_path / "invalid.yaml"
+    config_path.write_text("dashboard:\n  port: nope\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "src"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "sentinelpi.main", "--config", str(config_path)],
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 2
+    assert "Configuration error: configuration is invalid" in result.stderr
+    assert "dashboard.port: must be an integer" in result.stderr
+
+
+def test_check_config_reports_missing_explicit_file_without_traceback(tmp_path):
+    missing = tmp_path / "missing.yaml"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "src"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "sentinelpi.main", "--config", str(missing), "--check-config"],
+        capture_output=True,
+        env=env,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 2
+    assert "Configuration error: configuration file not found" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_preflight_skips_when_outputs_are_disabled():

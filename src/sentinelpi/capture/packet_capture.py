@@ -21,8 +21,9 @@ import logging
 import queue
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from ..utils import clock
 from typing import Any, List, Optional
 
@@ -81,13 +82,24 @@ class CapturedConnection:
 # Union type for queued events
 CaptureEvent = CapturedARP | CapturedDNS | CapturedConnection
 
-# BPF filter: capture ARP, DNS (UDP 53), and TCP SYNs only.
-# This keeps CPU load minimal while feeding the detectors what they need.
-DEFAULT_BPF_FILTER = (
-    "arp or "
-    "(udp port 53) or "
-    "(tcp[tcpflags] & tcp-syn != 0)"
-)
+def build_bpf_filter(*, dns_monitoring_enabled: bool = True) -> str:
+    """Build the capture filter from runtime-enabled packet features."""
+    clauses = ["arp", "(tcp[tcpflags] & (tcp-syn|tcp-ack) = tcp-syn)"]
+    if dns_monitoring_enabled:
+        clauses.insert(1, "(udp port 53)")
+    return " or ".join(clauses)
+
+
+# Default remains the full passive feature set for direct PacketCapture users.
+DEFAULT_BPF_FILTER = build_bpf_filter()
+
+SYN_DEDUP_SECONDS = 60
+MAX_RECENT_SYNS = 50_000
+
+
+def is_connection_initiation(flags: str) -> bool:
+    """Return whether TCP flags represent SYN without ACK."""
+    return "S" in flags and "A" not in flags
 
 
 class PacketCapture:
@@ -119,6 +131,10 @@ class PacketCapture:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._dropped_count = 0
+        self.emitted = 0
+        self._recent_syns: OrderedDict[
+            tuple[str, int, str, int], datetime
+        ] = OrderedDict()
 
     def start(self) -> bool:
         """
@@ -317,7 +333,7 @@ class PacketCapture:
             dport = udp.dport
             proto = "udp"
 
-        return CapturedConnection(
+        event = CapturedConnection(
             timestamp=now,
             src_ip=ip.src,
             src_port=sport,
@@ -327,11 +343,39 @@ class PacketCapture:
             flags=flags,
             size=size,
         )
+        if event.protocol == "tcp":
+            if not is_connection_initiation(event.flags):
+                return None
+            if self._is_retransmitted_syn(event):
+                return None
+        return event
+
+    def _is_retransmitted_syn(self, event: CapturedConnection) -> bool:
+        """Collapse repeated SYNs for one 5-tuple within the scan window."""
+        cutoff = event.timestamp - timedelta(seconds=SYN_DEDUP_SECONDS)
+        while self._recent_syns:
+            _oldest_key, oldest_time = next(iter(self._recent_syns.items()))
+            if oldest_time > cutoff:
+                break
+            self._recent_syns.popitem(last=False)
+
+        key = (event.src_ip, event.src_port, event.dst_ip, event.dst_port)
+        previous = self._recent_syns.get(key)
+        if previous is not None and previous > cutoff:
+            self._recent_syns.move_to_end(key)
+            return True
+
+        self._recent_syns[key] = event.timestamp
+        self._recent_syns.move_to_end(key)
+        while len(self._recent_syns) > MAX_RECENT_SYNS:
+            self._recent_syns.popitem(last=False)
+        return False
 
     def _enqueue(self, event: CaptureEvent) -> None:
         """Non-blocking enqueue; drop and count if queue is full."""
         try:
             self.event_queue.put_nowait(event)
+            self.emitted += 1
         except queue.Full:
             self._dropped_count += 1
             if self._dropped_count % 1000 == 0:

@@ -40,7 +40,8 @@ network:
 # =============================================================================
 # TRUSTED DEVICES
 # =============================================================================
-# Devices known to belong to you — new device alerts are suppressed for these.
+# Devices known to belong to you — new-device and low-confidence learned-behavior
+# alerts are suppressed. Security/reputation detections remain active.
 # You can specify by IP, MAC, or both. Name and notes are for your reference.
 trusted_devices: []
   # - ip: "192.168.1.100"
@@ -366,7 +367,8 @@ response:
   # DNS sinkhole: block a malicious DOMAIN at the resolver.
   dns_sinkhole_enabled: false
   dns_sinkhole_backend: hosts         # hosts | pihole | unbound
-  dns_sinkhole_hosts_file: /etc/sentinelpi/sinkhole.hosts
+  # Keep responder state under the service's writable data directory.
+  dns_sinkhole_hosts_file: /var/lib/sentinelpi/sinkhole.hosts
   sinkhole_categories:
     - threat_intel
     - dns_anomaly
@@ -405,6 +407,7 @@ cluster:
   tls_ca_cert: ""             # sensor: CA bundle to verify the collector's cert
   tls_verify: true            # sensor: set false only for self-signed testing
   ingest_require_verified_header: false  # collector: require proxy-verified client cert
+  ingest_max_payload_bytes: 65536        # collector: hard request-body limit
 
 # =============================================================================
 # CORRELATION  (Phase 3 — turn alert noise into incidents)
@@ -418,6 +421,7 @@ correlation:
   min_sensors: 2          # actor seen by >= this many sensors -> incident
   min_targets: 5          # OR actor hit >= this many distinct targets -> incident
   cooldown_seconds: 600
+  max_actors: 4096        # hard memory ceiling for unique actor state
 
 # =============================================================================
 # FLOW INGESTION  (Phase 3 — router/firewall coverage)
@@ -439,6 +443,12 @@ flow:
   netflow_enabled: false
   netflow_bind_host: "0.0.0.0"
   netflow_port: 2055              # common NetFlow/IPFIX collector port
+  # Required when enabled. Prefer exact router/switch IPs; CIDRs are accepted.
+  netflow_allowed_exporters: []   # e.g. ["192.168.1.1", "10.0.0.0/28"]
+  netflow_max_exporters: 16
+  netflow_max_observation_domains_per_exporter: 32
+  netflow_max_templates_per_context: 256
+  netflow_max_records_per_datagram: 4096
   # pfSense/OPNsense: tail filterlog. Point at a file the Pi can read — usually
   # the firewall's syslog forwarded to the Pi and written out by rsyslog.
   filterlog_enabled: false

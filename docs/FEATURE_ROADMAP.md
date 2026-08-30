@@ -3,8 +3,12 @@
 Goal: evolve SentinelPi from a strong single-host anomaly monitor into **the protector of the
 whole network** — broader visibility, smarter detection, real response, and a usable interface.
 
-For the current bug-focused review findings and implementation plan, see
-[Development Roadmap](DEVELOPMENT_ROADMAP.md).
+The original Phase 0–6 roadmap is retained below as implementation history. As of 2026-07-13, all
+corrective review findings are closed and the suite contains 476 tests. Current follow-on work is
+tracked in the [Development Roadmap](DEVELOPMENT_ROADMAP.md); the active phase is **Phase 4:
+Operational Visibility And Control**. Its runtime capability registry is shipped, while baseline
+lifecycle controls, distinct sensor/exporter identity, protocol fixtures, unified policy controls,
+reliable notification delivery, and robust report delivery remain planned.
 
 This roadmap is sequenced so each phase is independently shippable and builds on the last.
 Phase 0 is the prerequisite cleanup from `CODE_REVIEW.md`; don't build new detection on top of
@@ -20,10 +24,10 @@ racy detectors.
 
 **Outcome:** a daemon you can trust to run for months.
 
-_Status 2026-06-02: **Phase 0 complete.** All Critical/High items plus the
-timezone-aware clock (M1) and production web server (H3) are fixed with regression
-tests; suite green at 77 tests. Remaining review items are M2–M6 / L1–L6 hardening
-and polish — none block Phase 1._
+_Milestone status 2026-06-02: **Phase 0 complete.** All Critical/High items plus the
+timezone-aware clock (M1) and production web server (H3) were fixed with regression
+tests; the suite was green at 77 tests. Subsequent hardening and polish are also complete; see the
+current-state note above._
 
 ---
 
@@ -173,15 +177,18 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
   - ✅ **Port/internal-peer profile.** _Shipped (2026-06-13): `detectors/host_profile_detector.py`
     learns each local host's usual destination ports and internal peers (persisted in `host_profile`,
     schema v7), then flags first off-profile values after the per-dimension profile is established.
-    Tests in `test_host_profile.py`._ Remaining profile dimensions (bytes/protocol mix) are
-    follow-ups.
-- **Sequence/correlation engine.** Turn related alerts into **incidents** (e.g. new device → port
+    Tests in `test_host_profile.py`._
+  - ✅ **Protocol/byte-range profile.** _Shipped (2026-06-17): the host profile learns L4 protocol
+    mix and per-flow transfer-size buckets, with explainable alerts after each dimension is ready._
+- ✅ **Sequence/correlation engine.** Turn related alerts into **incidents** (e.g. new device → port
   scan → admin connection = "possible intrusion in progress") with a single timeline, instead of N
   independent alerts. _Shipped (2026-06-10): ordered single-host new-device → port-scan →
   lateral-movement chains now raise INCIDENT alerts with a structured `extra.timeline`._
 - **Optional ML anomaly scoring** (IsolationForest / simple autoencoder) on the feature vectors you
   already compute, as a *secondary* signal that boosts confidence — never the sole trigger.
-- **Adaptive thresholds** that learn per-network noise floors instead of static `sensitivity` tiers.
+- ✅ **Adaptive thresholds.** _Shipped (2026-06-17): bounded per-host multiplicative backoff is
+  applied to port-scan, host-sweep, lateral-movement, NXDOMAIN, and DGA thresholds and decays toward
+  the configured global floor._
 - **Encrypted-traffic heuristics:** JA3/JA3S TLS fingerprinting to spot malware C2 by its TLS
   client signature even without decryption.
 
@@ -192,21 +199,25 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
   timeline view, per-host drill-down. _Partially shipped (2026-06-14): `/api/events` provides an
   SSE dashboard stream and the frontend live-refreshes status, alerts, and response actions with a
   polling fallback._
+  - ✅ **Runtime capability matrix.** _Shipped (2026-07-13): one registry describes configured and
+    live inputs, detectors, notifiers, responders, and services; it drives event/poll routing and is
+    exposed through preflight plus `/api/status` with lifecycle and activity state._
   - ✅ **Browser login + session auth.** _Shipped (2026-06-06): the H2 header-only token hardening
     had made the dashboard unreachable from a browser (the index route 401'd on navigation). Added a
     `/login` page (token posted in the form body, never the URL) that sets a signed, HttpOnly,
     SameSite=Strict session cookie; routes accept the cookie OR a `Bearer` header; query-string
     tokens stay rejected; `/logout` clears it. Frontend `apiFetch` redirects to `/login` on any 401.
     Tests in `test_dashboard_auth.py` + `test_dashboard_render.py`._
-- **Notifier expansion:** Telegram, Slack, Discord, ntfy, Apple Push — with rich actionable buttons
-  (ack / mute / quarantine).
-- **Scheduled reports:** the `_generate_daily_report` scaffold → emailed daily/weekly digest + a
-  monthly "security posture" summary with trends.
-- **SIEM export:** native CEF/Syslog and an OpenTelemetry/ECS JSON sink so SentinelPi feeds Wazuh,
-  Splunk, or Elastic.
+- **Notifier expansion:** ntfy actionable approvals and Twilio SMS are shipped; Telegram, Slack,
+  Discord, and Apple Push remain optional future integrations.
+- **Scheduled reports:** basic restart-safe daily/weekly summary alerts are shipped. Explicit
+  channel delivery tracking, timezone/DST controls, missed-run recovery, and monthly posture trends
+  remain in the active backlog.
+- ✅ **SIEM export.** _Shipped: native CEF/Syslog, ECS JSON, and OpenTelemetry OTLP/HTTP outputs._
 - **Mobile-friendly status page + PWA** so "is my network OK right now?" is a glance on your phone.
-- **One-command install / systemd hardening:** ship a `systemd` unit with `CAP_NET_RAW` only
-  (no full root), seccomp, and read-only filesystem where possible.
+- ✅ **One-command install / systemd hardening.** _Shipped: the installer and default service use a
+  dedicated user, `CAP_NET_RAW` only, syscall/filesystem restrictions, and an explicit
+  active-response override for `CAP_NET_ADMIN`._
 
 ---
 
@@ -221,9 +232,10 @@ Today SentinelPi sees its own host + the LAN it can sniff. To protect *the netwo
   backends, sensitivity profiles) and exits non-zero on invalid config. `--check` now runs active
   preflight checks: configured network notifiers are probed, and responders plan synthetic alerts
   without executing actions._
-- **Backup/restore** of the baseline DB so a re-image doesn't reset months of learned behavior.
+- ✅ **Backup/restore.** _Shipped: checksum-verified SQLite snapshots include learned baseline and
+  runtime state through the `--backup` and `--restore` commands._
 - ✅ **Continuous integration.** _Shipped: `.github/workflows/ci.yml` runs compile checks, ruff,
-  mypy, and coverage-enabled pytest on Python 3.11 + 3.12 for every push/PR, and emits coverage
+  mypy, and coverage-enabled pytest on Python 3.10, 3.11, and 3.12 for every push/PR, and emits coverage
   XML._
 
 ---
@@ -241,10 +253,10 @@ The original "biggest protector payoff for least work" slice — status as of 20
 
 ---
 
-## Next session — open items for implementation
+## Completed follow-up session (historical)
 
-Pick up here in a fresh chat. Ordered by value/effort; each is independently shippable and
-should follow the project's conventions (opt-in config, dry-run-safe, tests alongside).
+This 2026-06 follow-up list is complete and retained as implementation history. New work should use
+the active backlog in `DEVELOPMENT_ROADMAP.md`.
 
 1. ✅ **Actionable notifier (ntfy) with approve/reject.** _Shipped (2026-06-10._ `NtfyNotifier`
    in `alerts/notifiers.py` pushes alerts and, for actions awaiting approval, an actionable
@@ -262,7 +274,7 @@ should follow the project's conventions (opt-in config, dry-run-safe, tests alon
    libs scapy/waitress/maxminddb ignored via overrides), third-party stubs added to
    `requirements-dev.txt`, all 35 baseline errors fixed (generic eviction-helper key types,
    `Severity.__lt__` Liskov fix, correlator timestamp typing, None-guards, etc.), and a `mypy` gate
-   wired into CI. `mypy` reports clean on 53 source files.
+   wired into CI. `mypy` now reports clean on 65 source files.
 
 4. ✅ **`--check` exercises notifiers/responders in dry-run.** _Shipped (2026-06-11):_
    `config/preflight.py` probes configured network notifiers and asks enabled responders to plan
@@ -270,13 +282,14 @@ should follow the project's conventions (opt-in config, dry-run-safe, tests alon
 
 5. ✅ **Per-host profile dimensions beyond active-hours.** _Shipped (2026-06-13):_ destination-port
    and internal-peer profiles are persisted in schema v7 and alert on deviation from the host's own
-   learned behavior. Follow-up: bytes/protocol mix profiles.
+   learned behavior. Protocol-mix and byte-range dimensions shipped on 2026-06-17.
 
 6. ✅ **Dashboard live updates.** _Shipped (2026-06-14):_ `/api/events` streams dashboard status
    ticks as server-sent events; the dashboard uses EventSource to refresh status cards, alerts, and
-   response actions live, with polling fallback. Follow-up: host drill-down pages and network map.
+   response actions live, with polling fallback. Host drill-down pages are shipped; the network map
+   remains future work.
 
-**Project conventions for any of the above:** gate new behavior behind a config flag (default
-off/safe), keep responders dry-run + approval-gated, add tests in `tests/` (suite currently 281,
-green on 3.11/3.12), and run `pytest -q` before committing. Dashboard behavior that lives in
+**Current project conventions:** gate new behavior behind a config flag (default off/safe), keep
+responders dry-run + approval-gated, add tests in `tests/` (suite currently 476, with CI on Python
+3.10/3.11/3.12), and run `python -m pytest -q` before committing. Dashboard behavior that lives in
 template JS should get a render assertion in `test_dashboard_render.py`.

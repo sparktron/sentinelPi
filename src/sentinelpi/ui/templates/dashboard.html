@@ -372,17 +372,25 @@ async function loadDevices() {
         <td style="color:${scoreColor(d.suspicion_score)}; font-weight:bold">${d.suspicion_score.toFixed(1)}</td>
         <td>
           ${d.is_gateway ? '<span class="badge badge-info">GW</span> ' : ''}
-          ${d.is_trusted ? '<span class="badge badge-low">TRUSTED</span>' : `<button class="action-btn" onclick="trustDevice('${esc(d.ip)}', this)">Trust</button>`}
+          ${d.is_trusted
+            ? `<button class="action-btn" onclick="setDeviceTrust('${esc(d.ip)}', false)">Untrust</button>`
+            : `<button class="action-btn" onclick="setDeviceTrust('${esc(d.ip)}', true)">Trust</button>`}
         </td>
       </tr>
     `).join('');
   } catch(e) { console.error('Devices load failed:', e); }
 }
 
-async function trustDevice(ip, btn) {
-  await apiFetch(`/api/devices/${encodeURIComponent(ip)}/trust`, {method: 'POST'});
-  btn.textContent = 'Trusted';
-  btn.disabled = true;
+async function setDeviceTrust(ip, trusted) {
+  if (!trusted && !confirm(`Remove trust from ${ip}?`)) return;
+  const action = trusted ? 'trust' : 'untrust';
+  const response = await apiFetch(`/api/devices/${encodeURIComponent(ip)}/${action}`, {method: 'POST'});
+  if (!response.ok) {
+    const body = await response.json();
+    alert(body.error || `Unable to ${action} device`);
+    return;
+  }
+  await loadDevices();
 }
 
 // Load suspicious hosts

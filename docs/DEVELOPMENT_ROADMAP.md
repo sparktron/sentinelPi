@@ -1,18 +1,132 @@
 # SentinelPi Development Roadmap
 
-_Created: 2026-06-10. Scope: full repository review of `src/`, `tests/`, `config/`,
-`.github/`, and operator docs._
+_Created: 2026-06-10 · Updated: 2026-07-13. Scope: full repository review of `src/`, `tests/`,
+`config/`, `.github/`, and operator docs._
 
 ## Review Summary
 
-SentinelPi has a solid structure and a broad regression suite: 281 tests passed during this
-review. The highest-value work now is operational correctness for long-running deployments:
-make persisted baselines fully survive restarts, make `--check-config` actually reject invalid
-operator input, and finish graceful lifecycle handling for services that already have stop APIs.
+SentinelPi has a solid structure and a broad regression suite: 476 tests pass after the 2026-07-12
+corrective phases and the 2026-07-13 closeout. Runtime detector wiring, restart-safe
+learning/response state, configuration truthfulness, deployment least privilege, bounded input
+state, persistence safety, live trust policy, idempotent logging, and runtime capability reporting
+are in place. All review findings are resolved; remaining work is the Phase 4 feature backlog below.
 
 Severity legend: Critical means detection or shutdown correctness can be wrong in normal use.
 High means likely operator confusion, noisy detection, or degraded reliability. Medium means
 important hardening or usability work.
+
+## 2026-07-12 Repository-Wide Review Backlog
+
+The current review is documented in full in [`CODE_REVIEW.md`](CODE_REVIEW.md). Validation was
+green (405 tests, Ruff, mypy, and compileall), but service-level tracing found runtime gaps not
+covered by isolated component tests. Phase 0 was completed the same day and raised the suite to
+408 tests. Phase 1 then completed restart-safe learning, response persistence/expiration,
+threat-feed health, and final baseline flushing, raising the suite to 418 tests. Phase 2 then
+completed configuration/deployment safety, raising the suite to 443 tests. This
+was followed by Phase 3 resilience, trust-policy, and collector validation work, raising the suite
+to 469 tests. The runtime capability registry and final logging correction raised the suite to 476
+tests on 2026-07-13. This backlog supersedes the older completed phases for new work; historical
+items below remain as implementation history.
+
+### Phase 0: Restore Advertised Detection (Critical)
+
+- [x] Wire `PortScanDetector` into packet/flow routing and `/proc` fallback polling.
+- [x] Route `DeviceTracker` new-device, MAC/IP-change, and ARP-churn alerts through `AlertManager`.
+- [x] Add service-level wiring tests that exercise the real router/poller-to-alert-manager path and
+  inventory every advertised detector.
+
+Status: completed 2026-07-12. One shared port-scan detector now consumes both input paths, inventory
+polling uses the standard alert-manager dispatch wrapper, and three regressions cover the runtime
+inventory/dispatch wiring.
+
+### Phase 1: Restart And Response Correctness (High)
+
+- [x] Persist learning completion/readiness so a restart does not trigger another full quiet period.
+- [x] Implement `response.block_duration_seconds` with durable expiry and idempotent unblock.
+- [x] Persist responder plans, approvals, executions, results, and expirations; reconcile system
+  state after restart.
+- [x] Treat an all-feed threat-intel refresh failure as watchdog failure and expose per-feed age.
+- [x] Flush dirty baseline statistics during graceful shutdown.
+
+Status: completed 2026-07-12. Mature baselines stay active across restart, partial checkpoints flush
+on shutdown, timed iptables/nftables blocks expire and reconcile after restart, response actions
+have a durable audit record, and threat-feed health is visible per feed.
+
+### Phase 2: Configuration Truthfulness And Deployment Safety (High)
+
+- [x] Make normal startup validate configuration; fail explicit missing/malformed configs closed;
+  reject unknown keys.
+- [x] Define profile-versus-explicit-threshold precedence and test it.
+- [x] Implement or remove the dead switches for DNS disable, active discovery, file integrity,
+  scheduled reports, and traffic-spike monitoring.
+- [x] Split passive and active-response deployment capabilities; default to `NET_RAW` without
+  `NET_ADMIN`, and make the configured sinkhole target writable when that responder is enabled.
+- [x] Add NetFlow exporter allowlisting, observation-domain-aware template caches, and cache limits.
+
+Exit criteria: every documented public option has a tested runtime effect, startup cannot silently
+fall back from an explicitly requested config, and default deployments use least privilege.
+
+Status: completed 2026-07-12. Normal startup now validates before subsystem initialization,
+explicit and environment-selected config load failures are fatal, and unknown YAML keys report
+their full path. Threshold precedence is now defaults, then profile, then explicit values.
+DNS capture/detection disabling, bounded active ARP discovery, SHA-256 file monitoring,
+restart-safe scheduled summaries, and per-interface traffic-spike polling are now wired and tested.
+Default systemd and Compose deployments now grant only `NET_RAW`; explicit response overrides add
+`NET_ADMIN`, and hosts-file sinkhole state defaults to the writable data directory.
+NetFlow/IPFIX now requires trusted exporter networks, isolates template caches by exporter and
+observation domain, and caps exporters, domains, templates, and records per datagram.
+Full validation passes with 443 tests, Ruff, mypy, compileall, and the sample configuration check.
+
+### Phase 3: Resilience And Policy Consistency (Medium)
+
+- [x] Exclude SYN-ACK/retransmit artifacts from connection-initiation signals.
+- [x] Bound incident-correlator actor/cooldown maps.
+- [x] Scope SQLite thread-local connections per `Database` instance/path.
+- [x] Prevent active response when alert/action persistence fails and surface durable health state.
+- [x] Make dashboard trust a locked, live, auditable policy that actually changes detector behavior.
+- [x] Validate and size-limit collector payloads; return structured 4xx errors.
+
+Exit criteria: malformed or high-cardinality inputs remain bounded, trust behavior matches the UI,
+and no unpersisted alert can cause an armed response.
+
+Status: completed 2026-07-12. Passive capture now admits only SYN-without-ACK initiations and
+collapses retransmitted 5-tuples for 60 seconds with a bounded cache. Correlation now expires empty
+actor/cooldown state, enforces a configurable LRU actor ceiling, and reports eviction metrics.
+SQLite thread-local connection state is now owned by each `Database` instance, so independent paths
+cannot reuse or close one another's connection on the same thread. Alert dispatch now stops before
+notification, scoring, correlation, or response if its source record cannot be saved. Response
+plans and pre-execution intent are mandatory persistence gates, and both paths publish durable
+degraded/recovered health through the status payload and critical logs.
+Dashboard trust/untrust now goes through the tracker's locked live policy, persists by device MAC,
+and appends actor/timestamp audit history. Trusted devices suppress only new-device and
+low-confidence learned-behavior alerts; security and reputation detections remain active.
+Collector ingest now enforces a configurable request-body ceiling before model construction,
+validates enums, timestamps, confidence, strings, and bounded `extra` structures, and returns typed
+JSON errors for malformed, unsupported, oversized, or unauthorized requests.
+Full validation passes with 469 tests, Ruff across `src` and `tests`, mypy across all 64 source
+files, compileall, and the shipped configuration check.
+
+### Phase 4: Operational Visibility And Control (Feature Work)
+
+- [x] Runtime component registry/capability matrix shared by startup, preflight, status, and tests.
+- [ ] Per-detector baseline readiness, reset/freeze controls, and poisoning/staleness indicators.
+- [ ] Per-sensor/exporter credentials with identity binding and replay protection.
+- [ ] Sanitized PCAP/flow integration fixtures covering IPv6, UDP, SYN handshakes, and observation
+  domains.
+- [ ] Unified trust/whitelist/mute policy with expiry, audit history, preview, and undo.
+- [ ] Notification retry/delivery tracking and optional high-severity dead-letter storage.
+- [ ] Delivered daily/weekly reports with timezone/DST and missed-run handling.
+
+Status: in progress 2026-07-13. The first checkpoint introduces one ordered manifest for every
+input, inventory component, detector, notifier, responder, and runtime service. Startup event
+routing and polling now derive from this registry; preflight exposes the same configured/disabled
+matrix; `/api/status` reports configured, ready, started, degraded, and stopped states plus activity
+counters/timestamps. Wiring tests assert configured routed components are actually bound.
+The corrective backlog is also fully closed: repeated logging setup now replaces and closes only
+SentinelPi-owned handlers, preventing duplicate output without disturbing host-process handlers.
+Full validation passes with 476 tests, Ruff across `src` and `tests`, mypy across all 65 source
+files, compileall, and the shipped configuration check. Remaining unchecked items above are feature
+work, not unresolved review fixes.
 
 ## Findings To Fix
 
@@ -208,7 +322,7 @@ A 2026-06-29 follow-up review opened a small corrective backlog below.
    - Keep coverage informational until thresholds are stable.
 
    Status update: compileall, ruff, mypy, and coverage XML are now wired into CI (2026-06-10 —
-   mypy passes clean on all source files with stubs + `[tool.mypy]` config). ✅ Packaging smoke
+   mypy checks the configured `src/` scope cleanly with stubs + `[tool.mypy]` config). ✅ Packaging smoke
    test added (2026-06-17): a `package` CI job builds the sdist+wheel and installs the wheel into a
    clean venv, then runs the console entry point and verifies the bundled dashboard templates ship
    in the wheel — which surfaced and fixed a real packaging bug (templates were absent from the
@@ -241,8 +355,7 @@ Exit criteria:
 
 Status: notifier lifecycle management, DNS cooldown pruning, dead-thread alerts, stale-capture
 alerts, threat-intel refresh/staleness alerts, queue-saturation alerts, low-disk alerts, and
-`/api/status` watchdog exposure are complete as of 2026-06-10. Daily-report health summaries remain
-open.
+`/api/status` watchdog exposure and daily-report health summaries are complete as of 2026-06-17.
 
 Exit criteria:
 - Shutdown tests prove no managed service is skipped.
@@ -370,15 +483,13 @@ Exit criteria:
 
 ## Future Directions
 
-The original roadmap items above are shipped; these are candidate next steps beyond that review,
-not yet started. They are infrastructure/operations work rather than detection features. The
-2026-06-29 follow-up review items are tracked separately above.
+The original roadmap items above are shipped. This section records infrastructure/operations work
+that followed the review; completed items remain as history, and any unchecked items are candidates
+rather than active Phase 4 commitments.
 
-- **Tag a v1.0.0 release.** `pyproject` is already at `1.0.0`, the wheel builds and installs cleanly
-  (packaging smoke test is green in CI), and `master` is healthy. Cut an annotated `v1.0.0` tag and a
-  GitHub release with a changelog generated from git history, and attach the built sdist/wheel.
-  Establish a lightweight release process (e.g. a tag-triggered CI job that builds and publishes the
-  artifacts) for subsequent versions.
+- ✅ **Tag a v1.0.0 release.** _Shipped 2026-06-29/30: `v1.0.0` is tagged and published as the first
+  stable GitHub release. A tag-triggered artifact publication workflow remains a possible release
+  automation improvement for later versions._
 - ✅ **Enforce a test-coverage gate.** _Shipped (2026-06-17): `[tool.coverage.report] fail_under = 70`
   in `pyproject.toml` makes any coverage run (CI, or local `pytest --cov`) fail below 70% total —
   ~3-4 points under the current ~74% line coverage to absorb run-to-run variance. The existing CI
@@ -388,16 +499,16 @@ not yet started. They are infrastructure/operations work rather than detection f
   (hardened `systemd/sentinelpi.service` + `scripts/install.sh`); added `scripts/uninstall.sh` for
   clean teardown, plus a containerized path — a multi-stage `Dockerfile` (slim image, non-root
   `sentinelpi` user, packaged templates, `HEALTHCHECK`), `.dockerignore`, and a `docker-compose.yml`
-  using host networking + `NET_RAW`/`NET_ADMIN` so the non-root process can capture without root.
-  Verified: image builds, runs as non-root, `--check-config`/`--version` work, and the daemon boots
-  with the dashboard serving (auth enforced). README documents both paths._
+  using host networking + `NET_RAW` so the non-root process can capture without root; the 2026-07-12
+  hardening follow-up moved `NET_ADMIN` to an explicit active-response override. Verified: image
+  builds, runs as non-root, `--check-config`/`--version` work, and the daemon boots with the dashboard
+  serving (auth enforced). README documents both paths._
 
-## Validation Performed
+## Historical Validation Record
 
-- `python -m pytest -q` passed: 292 tests after the Phase 1/early Phase 2 fixes.
-- Manual invalid-config check proved `--check-config` currently accepts invalid values.
+- `python -m pytest -q` passed 292 tests after the original Phase 1/early Phase 2 fixes.
+- At that checkpoint, a manual invalid-config check exposed the since-fixed `--check-config` issue.
 - Static review covered core runtime modules, tests, CI, sample config, README, and existing docs.
 
-Note: local validation used Python 3.10.12 from the current shell, while `pyproject.toml` declares
-Python 3.11+. CI already covers Python 3.11 and 3.12, so follow-up implementation should validate on
-one of the supported runtimes too.
+Current validation is recorded in the active Phase 4 status above. The project requires Python
+3.10 or newer, and CI covers Python 3.10, 3.11, and 3.12.

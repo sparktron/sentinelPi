@@ -41,6 +41,7 @@ class OperationalWatchdog:
         self._last_threat_intel_success_at: datetime | None = None
         self._last_threat_intel_error_at: datetime | None = None
         self._last_threat_intel_error = ""
+        self._threat_intel_feeds: dict[str, dict] = {}
         self._last_status = self.snapshot()
 
     def set_event_sources_active(self, active: bool) -> None:
@@ -57,17 +58,21 @@ class OperationalWatchdog:
         self._last_event_at = when or clock.now()
 
     def record_threat_intel_refresh(
-        self, *, success: bool, error: str = "", when: datetime | None = None
+        self, *, success: bool, error: str = "", feeds: dict | None = None,
+        when: datetime | None = None
     ) -> None:
         """Mark the outcome of a threat-intel refresh attempt."""
         ts = when or clock.now()
         if success:
             self._last_threat_intel_success_at = ts
-            self._last_threat_intel_error_at = None
-            self._last_threat_intel_error = ""
-        else:
+        if error:
             self._last_threat_intel_error_at = ts
             self._last_threat_intel_error = error
+        else:
+            self._last_threat_intel_error_at = None
+            self._last_threat_intel_error = ""
+        if feeds is not None:
+            self._threat_intel_feeds = {name: dict(status) for name, status in feeds.items()}
 
     def check(self) -> List[Alert]:
         """Run health checks and return any SYSTEM alerts."""
@@ -147,6 +152,8 @@ class OperationalWatchdog:
                 "stale": False,
                 "last_error": "",
                 "last_error_at": None,
+                "feeds": {},
+                "failed_feeds": [],
             }
 
         now = clock.now()
@@ -154,6 +161,24 @@ class OperationalWatchdog:
         stale_after = interval * self.config.monitoring.self_monitoring_threat_intel_stale_multiplier
         reference = self._last_threat_intel_success_at or self._started_at
         age = (now - reference).total_seconds()
+        feeds = {}
+        failed_feeds = []
+        for name, state in self._threat_intel_feeds.items():
+            feed_state = dict(state)
+            last_success = feed_state.get("last_success_at")
+            feed_age = None
+            if last_success:
+                try:
+                    parsed = datetime.fromisoformat(last_success)
+                    feed_age = (now - parsed).total_seconds()
+                except (TypeError, ValueError):
+                    feed_age = None
+            feed_state["seconds_since_success"] = round(feed_age, 1) if feed_age is not None else None
+            feed_state["stale"] = feed_age is not None and feed_age >= stale_after
+            if feed_state.get("error") or feed_state["stale"]:
+                failed_feeds.append(name)
+            feeds[name] = feed_state
+
         return {
             "enabled": True,
             "last_success_at": (
@@ -168,6 +193,8 @@ class OperationalWatchdog:
                 self._last_threat_intel_error_at.isoformat()
                 if self._last_threat_intel_error_at else None
             ),
+            "feeds": feeds,
+            "failed_feeds": sorted(failed_feeds),
         }
 
     def _disk_status(self) -> dict:

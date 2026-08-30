@@ -6,7 +6,7 @@
 
 > *It learns what "normal" looks like — then tells you, in plain English, the moment something doesn't fit.*
 
-[![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi%20%7C%20Linux-C51A4A?logo=raspberrypi&logoColor=white)](#-requirements)
 [![Release](https://img.shields.io/badge/release-v1.0.0-success.svg)](https://github.com/sparktron/sentinelPi/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -38,8 +38,12 @@ step** — not a wall of packets.
 It runs for months on a Pi, works **without root**, stays **quiet** (no alert floods), and can even
 **act** on the worst threats once you trust it to.
 
-Current development follow-ups from the latest code review are tracked in
-[docs/DEVELOPMENT_ROADMAP.md](docs/DEVELOPMENT_ROADMAP.md).
+**Current repository state (2026-07-13):** version metadata remains `1.0.0`; all corrective findings
+from the latest [repository-wide review](docs/CODE_REVIEW.md) are resolved, and the regression suite
+contains 476 tests. Phase 4 feature work is underway: its first checkpoint shipped a shared runtime
+component matrix that drives event/poll routing and exposes lifecycle/activity through preflight and
+`/api/status`. Remaining feature work is tracked in the
+[development roadmap](docs/DEVELOPMENT_ROADMAP.md).
 
 ## ✨ Highlights
 
@@ -52,7 +56,7 @@ Current development follow-ups from the latest code review are tracked in
 | 🖥️ **Sleek live dashboard** | Dark-themed web UI with SSE live updates, device inventory, per-host drill-downs, suspicion trends, and a response approval queue. |
 | 🛡️ **Can fight back (safely)** | Optional firewall block / DNS sinkhole / ARP re-pin / kill-switch — off by default, dry-run first, human-approved. |
 | 📣 **Tells you anywhere** | Email, ntfy push (with Approve/Reject buttons), Twilio SMS, webhooks, plus SIEM export (syslog ECS/CEF) and OpenTelemetry. |
-| 🩺 **Watches itself** | A built-in watchdog raises `SYSTEM` alerts when *SentinelPi* is degraded — dead threads, stale capture, low disk. |
+| 🩺 **Watches itself** | A built-in watchdog raises `SYSTEM` alerts for dead threads, stale capture, and low disk; the runtime component matrix reports configured, started, degraded, and active capabilities. |
 
 ## 🚀 Quick start
 
@@ -163,13 +167,15 @@ Everything above gets you running. Below is the full reference — expand what y
 | Detector | What it finds | Method |
 |----------|---------------|--------|
 | **ARP** | Gateway MAC changes, ARP conflicts, reply floods (MITM signature) | Rule-based |
-| **Port scan** | Vertical scans and subnet sweeps | Sliding-window counters |
+| **Port scan** | Vertical scans and subnet sweeps | Deduplicated SYN-only sliding windows |
 | **Beacon** | Regular outbound intervals (malware C2) | Coefficient of variation |
 | **Connection** | Count spikes, new destinations, new listening ports | Baseline z-score |
 | **DNS** | DGA domains, DNS tunneling, NXDOMAIN floods | Entropy + rate analysis |
 | **DoH / DoT** | Clients bypassing local DNS via encrypted resolvers | Port + resolver match |
 | **Lateral movement** | Admin-protocol fan-out between internal hosts | Rule + baseline |
 | **Auth log** | SSH brute force, new logins, sudo abuse | Pattern matching |
+| **File integrity** | Changes, deletion, or restoration of monitored files | SHA-256 polling |
+| **Traffic spike** | Interface transfer-rate spikes above learned volume | Per-interface baseline |
 | **Threat intel** | Connections to known-bad IPs/domains | Blocklist match |
 | **GeoIP / ASN** | First connection to a new country; bad-reputation networks | Per-host baseline |
 | **Active hours** | Activity outside a host's learned schedule | Time-window baseline |
@@ -177,6 +183,8 @@ Everything above gets you running. Below is the full reference — expand what y
 
 **Incident correlation** (optional) folds related alerts into a single `INCIDENT` with a timeline —
 e.g. *new device → port scan → lateral movement*, or one actor seen across multiple sensors/targets.
+Actor/cooldown state expires by window and is capped by `correlation.max_actors`; eviction metrics
+are exposed through `/api/status`.
 
 **Intelligence & enrichment** layered on top:
 - **Threat-intel feeds** — abuse.ch URLhaus / Feodo Tracker, Spamhaus DROP; cached locally and refreshed daily.
@@ -226,12 +234,14 @@ Go beyond a single host:
 
 - **Multi-sensor mesh.** Run SentinelPi on several segments and forward alerts to a central collector
   over **mutual-TLS** (shared-key auth layered with reverse-proxy-verified client certs). The
-  collector runs every forwarded alert through the full pipeline, and the dashboard offers per-sensor views.
+  collector validates and size-limits every forwarded alert before running it through the full
+  pipeline, and the dashboard offers per-sensor views.
 - **Cross-sensor correlation.** One actor crossing multiple sensors or hitting multiple targets is
   escalated into a single `INCIDENT` instead of N scattered alerts.
 - **Router / firewall flow ingest.** Feed `conntrack`, **NetFlow v5/v9 / IPFIX**, and pfSense/OPNsense
   `filterlog` exports so SentinelPi analyzes flows it could never sniff directly — every connection
-  detector works on them unchanged.
+  detector works on them unchanged. NetFlow/IPFIX requires an exporter IP/CIDR allowlist and keeps
+  observation-domain templates in bounded caches.
 - **SPAN / mirror-port mode.** Plug the Pi into a switch mirror port and set `network.mirror_mode: true`
   to capture *all* subnet traffic in promiscuous mode, not just this host's.
 - **DHCP-lease identity.** Name devices from your DHCP server's leases (dnsmasq / ISC) instead of guessing.
@@ -244,12 +254,14 @@ Go beyond a single host:
 <br>
 
 All behavior is driven by a single YAML file (`config/sentinelpi.yaml`). Every setting ships with a
-safe default — you only configure what differs for your network.
+safe default — you only configure what differs for your network. Daemon startup validates the
+effective configuration before creating runtime components; explicit missing/malformed files and
+unknown YAML keys are fatal instead of silently falling back to defaults.
 
 | Section | What it controls |
 |---------|------------------|
 | `network` | Interfaces, subnets, gateway IP/MAC, SPAN/mirror mode |
-| `trusted_devices` | Your known devices (suppresses new-device alerts) |
+| `trusted_devices` | Known devices; suppresses new-device and low-confidence learned-behavior alerts, but never security/reputation detections |
 | `monitoring` | Sensitivity profile, packet capture on/off, watchdog/self-monitoring, per-feature toggles |
 | `thresholds` | Per-detector tuning (scan windows, beacon intervals, z-score cutoffs, adaptive thresholds) |
 | `whitelist_ips` / `whitelist_domains` / `whitelist_ports` | Never-alert allowlists |
@@ -265,7 +277,8 @@ safe default — you only configure what differs for your network.
 | `flow` | conntrack / NetFlow / IPFIX / filterlog ingestion |
 
 **Sensitivity profiles** (`monitoring.sensitivity_profile`): `conservative`, `balanced`, or
-`aggressive` — a one-word dial that sets sane defaults across every detector.
+`aggressive` — a one-word dial that sets sane defaults across every detector. Explicit values in
+`thresholds` take precedence over the selected profile, so individual signals can be tuned.
 
 **Validate before you run:**
 ```bash
@@ -293,7 +306,8 @@ Route alerts wherever you live:
 - **SIEM export** — stream to a syslog collector as **ECS** (Elastic Common Schema JSON) or **CEF**
   (ArcSight) over UDP/TCP with RFC 5424 framing → feeds Wazuh, Splunk, Elastic.
 - **OpenTelemetry** — POST alerts as **OTLP/HTTP** JSON logs to a collector's `/v1/logs` (no OTel SDK dependency).
-- **Daily / weekly reports** — rolled-up digests including a health summary from the watchdog.
+- **Daily / weekly reports** — restart-safe local-time digests routed through the alert pipeline,
+  with alert, device, and baseline summaries.
 
 Every network channel participates in `sentinelpi --check`, which sends a clearly-labelled test alert
 (or connects without sending, for email) so you can prove delivery before going live.
@@ -358,7 +372,7 @@ next startup; newer ones are refused unless you pass `--force`.
 | `intel/` | Threat-feed download, caching, and matching |
 | `alerts/` | Dedup, cooldown, correlation, notification routing |
 | `responders/` | Optional, gated active-response actions |
-| `storage/` | SQLite persistence (WAL mode, thread-safe, migrations) |
+| `storage/` | SQLite persistence (WAL, per-instance thread-local connections, migrations) |
 | `ui/` | Flask web dashboard + multi-sensor collector |
 | `config/` | YAML loading and validation |
 | `utils/` | Network helpers, GeoIP/ASN, timezone-aware clock |
@@ -386,6 +400,7 @@ python -m pytest tests/ -v
 # Local CI checks
 python -m compileall -q src tests
 ruff check src tests
+mypy
 
 # Coverage (CI fails below the fail_under floor in pyproject.toml — currently 70%)
 python -m pytest tests/ --cov=sentinelpi --cov-report=term-missing
@@ -395,8 +410,8 @@ Fixtures simulate real attack traffic so detectors are tested end-to-end: normal
 port scans (100+ ports in 30s), beaconing malware (regular 60s intervals), ARP spoofing (gateway MAC
 change), SSH brute force (50 failures in 100s), DNS tunneling, and DGA NXDOMAIN floods.
 
-CI runs on Python 3.11 + 3.12: compile checks, ruff, mypy, coverage, and a packaging smoke test that
-builds and installs the wheel.
+CI runs on Python 3.10, 3.11, and 3.12: compile checks, ruff, mypy, coverage, and a
+packaging smoke test that builds and installs the wheel.
 
 </details>
 
@@ -435,17 +450,18 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Compose uses **host networking** plus `NET_RAW`/`NET_ADMIN` so the container can capture LAN traffic
-without root. The database and baselines persist in named volumes. For a capability-free,
-`/proc`-only deployment, set `monitoring.packet_capture_enabled: false` and drop the `cap_add` block.
-The image ships a `HEALTHCHECK` that runs `--check-config`.
+Compose uses **host networking** plus `NET_RAW` so the container can capture LAN traffic without
+root; `NET_ADMIN` is excluded by default. The database and baselines persist in named volumes. For
+a capability-free, `/proc`-only deployment, set `monitoring.packet_capture_enabled: false` and drop
+the `cap_add` block. If firewall or ARP active response is deliberately armed, add the explicit
+`docker-compose.response.yml` override. The image ships a `HEALTHCHECK` that runs `--check-config`.
 
 </details>
 
 ## 📋 Requirements
 
 - Raspberry Pi 4 or newer (or any Debian-based Linux host)
-- Python **3.11+**
+- Python **3.10+**
 - A network interface on the subnet you want to watch
 - Root or `CAP_NET_RAW` for packet capture — **optional**; `/proc` polling and flow ingest work
   without elevated privileges

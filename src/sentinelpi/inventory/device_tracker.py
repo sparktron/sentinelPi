@@ -58,15 +58,15 @@ class DeviceTracker:
         # Track ARP churn: timestamps of any MAC change event
         self._churn_times: deque = deque(maxlen=100)
 
-        # Pending alerts to return to caller
-        self._pending_alerts: List[Alert] = []
+        # Configured policy is immutable at runtime; dashboard changes are
+        # layered on top and persisted on device identities.
+        self._configured_trusted_ips = get_trusted_ips(config)
+        self._configured_trusted_macs = get_trusted_macs(config)
+        self._trusted_ips = set(self._configured_trusted_ips)
+        self._trusted_macs = set(self._configured_trusted_macs)
 
         # Load existing devices from database
         self._load_from_db()
-
-        # Trusted sets for quick lookup
-        self._trusted_ips = get_trusted_ips(config)
-        self._trusted_macs = get_trusted_macs(config)
 
         # Authoritative device identity from DHCP leases (optional).
         self._dhcp: Optional[DHCPLeaseSource] = None
@@ -85,8 +85,19 @@ class DeviceTracker:
         devices = self.db.get_all_devices()
         with self._lock:
             for device in devices:
+                configured_trust = (
+                    device.ip in self._configured_trusted_ips
+                    or device.mac in self._configured_trusted_macs
+                )
+                if configured_trust and not device.is_trusted:
+                    device.is_trusted = True
+                    self.db.set_device_trust(
+                        device.ip, device.mac, True, "configuration", clock.now()
+                    )
                 self._devices_by_ip[device.ip] = device
                 self._ip_by_mac[device.mac] = device.ip
+                if device.is_trusted:
+                    self._trusted_macs.add(device.mac)
         logger.debug("Loaded %d devices from database.", len(devices))
 
     def run_forever(self, stop_event: threading.Event) -> None:
@@ -108,29 +119,31 @@ class DeviceTracker:
         """
         Read ARP table and process all entries.
 
-        Returns list of new Alert objects generated during this poll.
-        Alerts are also stored in self._pending_alerts for retrieval.
+        Returns list of new Alert objects generated during this poll. The
+        service polling wrapper dispatches these through AlertManager.
         """
         entries = read_arp_table()
-        alerts: List[Alert] = []
 
         # Keep authoritative DHCP identity fresh each poll.
         if self._dhcp is not None:
             self._dhcp.refresh()
 
-        for entry in entries:
-            entry.mac = normalize_mac(entry.mac)
-            new_alerts = self._process_arp_entry(entry)
-            alerts.extend(new_alerts)
+        alerts = self.process_entries(entries)
 
         # Check for excessive ARP churn
         churn_alert = self._check_arp_churn()
         if churn_alert:
             alerts.append(churn_alert)
 
-        with self._lock:
-            self._pending_alerts.extend(alerts)
+        return alerts
 
+    def process_entries(self, entries: List[ARPEntry]) -> List[Alert]:
+        """Update inventory from passive or active ARP observations."""
+        alerts: List[Alert] = []
+        for entry in entries:
+            entry.mac = normalize_mac(entry.mac)
+            new_alerts = self._process_arp_entry(entry)
+            alerts.extend(new_alerts)
         return alerts
 
     def _process_arp_entry(self, entry: ARPEntry) -> List[Alert]:
@@ -148,6 +161,13 @@ class DeviceTracker:
                 self._devices_by_ip[entry.ip] = device
                 self._ip_by_mac[entry.mac] = entry.ip
                 self.db.upsert_device(device)
+                if (
+                    entry.ip in self._configured_trusted_ips
+                    or entry.mac in self._configured_trusted_macs
+                ):
+                    self.db.set_device_trust(
+                        device.ip, device.mac, True, "configuration", now
+                    )
 
                 if entry.ip not in self._trusted_ips and entry.mac not in self._trusted_macs:
                     alerts.append(self._new_device_alert(device))
@@ -169,6 +189,10 @@ class DeviceTracker:
                 # Update device record with new MAC
                 old_mac = existing.mac
                 existing.mac = entry.mac
+                existing.is_trusted = (
+                    entry.ip in self._configured_trusted_ips
+                    or entry.mac in self._trusted_macs
+                )
                 existing.suspicion_score = min(existing.suspicion_score + 0.3, 10.0)
                 existing.alert_count += 1
                 # Move ip_by_mac mapping
@@ -362,6 +386,49 @@ class DeviceTracker:
         with self._lock:
             return ip in self._devices_by_ip
 
+    def is_trusted_device(self, ip: str, mac: str = "") -> bool:
+        """Return the current locked trust decision for an IP/MAC identity."""
+        with self._lock:
+            device = self._devices_by_ip.get(ip)
+            candidate_mac = normalize_mac(mac) if mac else (device.mac if device else "")
+            return (
+                ip in self._trusted_ips
+                or candidate_mac in self._trusted_macs
+                or bool(device and device.is_trusted)
+            )
+
+    def set_device_trust(self, ip: str, trusted: bool, actor: str) -> Optional[Device]:
+        """Atomically change live trust policy and append an audit event."""
+        with self._lock:
+            device = self._devices_by_ip.get(ip)
+            if device is None:
+                return None
+            if not trusted and (
+                device.ip in self._configured_trusted_ips
+                or device.mac in self._configured_trusted_macs
+            ):
+                raise ValueError("configured trusted devices must be changed in configuration")
+
+            self.db.set_device_trust(ip, device.mac, trusted, actor, clock.now())
+            for known in self._devices_by_ip.values():
+                if known.mac == device.mac:
+                    known.is_trusted = trusted
+            if trusted:
+                self._trusted_macs.add(device.mac)
+            else:
+                self._trusted_macs.discard(device.mac)
+                self._trusted_macs.update(self._configured_trusted_macs)
+            return device
+
+    def get_device_trust_history(self, ip: str, limit: int = 50) -> List[dict]:
+        """Return trust audit events for the current device identity at ``ip``."""
+        with self._lock:
+            device = self._devices_by_ip.get(ip)
+            if device is None:
+                return []
+            mac = device.mac
+        return self.db.get_device_trust_history(mac, limit=limit)
+
     def mark_device_suspicious(self, ip: str, score_delta: float = 0.2) -> Optional[float]:
         """
         Increase suspicion score for a device — called by detectors. Returns the
@@ -383,10 +450,3 @@ class DeviceTracker:
             gw_ip = self.config.network.gateway_ip
             device = self._devices_by_ip.get(gw_ip)
             return device.mac if device else None
-
-    def pop_pending_alerts(self) -> List[Alert]:
-        """Retrieve and clear pending alerts."""
-        with self._lock:
-            alerts = list(self._pending_alerts)
-            self._pending_alerts.clear()
-        return alerts

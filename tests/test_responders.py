@@ -140,6 +140,7 @@ def test_nftables_backend_commands(config):
     fw.execute(action)
     assert runner.calls[0][0] == "nft"
     assert "drop" in runner.calls[0]
+    assert any("sentinelpi:" in token for token in runner.calls[0])
 
 
 # --------------------------------------------------------------- execution errors

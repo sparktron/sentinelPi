@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 from datetime import datetime, timedelta
 from typing import Deque, Dict, Iterable, NamedTuple, Optional
 
@@ -49,11 +49,14 @@ class IncidentCorrelator:
     def __init__(self, config) -> None:
         self.config = config.correlation
         self._lock = threading.Lock()
-        self._events: Dict[str, Deque[_CorrelationEvent]] = defaultdict(
-            lambda: deque(maxlen=500)
-        )
+        self._events: OrderedDict[str, Deque[_CorrelationEvent]] = OrderedDict()
         # actor -> last incident time (cooldown)
         self._last_incident: Dict[str, datetime] = {}
+        self._last_cleanup: Optional[datetime] = None
+        self._max_actors = max(1, int(self.config.max_actors))
+        self._actor_evictions = 0
+        self._expired_actors = 0
+        self._expired_cooldowns = 0
 
     def observe(self, alert: Alert) -> Optional[Alert]:
         """
@@ -73,7 +76,17 @@ class IncidentCorrelator:
         cutoff = now - timedelta(seconds=self.config.window_seconds)
 
         with self._lock:
-            events = self._events[actor]
+            self._cleanup(now, cutoff)
+            events = self._events.get(actor)
+            if events is None:
+                while len(self._events) >= self._max_actors:
+                    stale_actor, _ = self._events.popitem(last=False)
+                    self._last_incident.pop(stale_actor, None)
+                    self._actor_evictions += 1
+                events = deque(maxlen=500)
+                self._events[actor] = events
+            else:
+                self._events.move_to_end(actor)
             events.append(
                 _CorrelationEvent(
                     timestamp=now,
@@ -108,6 +121,43 @@ class IncidentCorrelator:
             if sequence and not triggered:
                 return self._build_sequence_incident(actor, sequence)
             return self._build_incident(actor, list(events))
+
+    def _cleanup(self, now: datetime, cutoff: datetime) -> None:
+        interval = max(1, min(60, self.config.window_seconds))
+        if (
+            self._last_cleanup is not None
+            and (now - self._last_cleanup).total_seconds() < interval
+        ):
+            return
+
+        for actor, events in list(self._events.items()):
+            while events and events[0].timestamp < cutoff:
+                events.popleft()
+            if not events:
+                del self._events[actor]
+                self._expired_actors += 1
+
+        cooldown_cutoff = now - timedelta(seconds=self.config.cooldown_seconds)
+        expired = [
+            actor for actor, timestamp in self._last_incident.items()
+            if timestamp <= cooldown_cutoff
+        ]
+        for actor in expired:
+            del self._last_incident[actor]
+            self._expired_cooldowns += 1
+        self._last_cleanup = now
+
+    @property
+    def state_metrics(self) -> dict[str, int]:
+        """Return bounded-state and eviction counters for health/status consumers."""
+        with self._lock:
+            return {
+                "tracked_actors": len(self._events),
+                "cooldown_entries": len(self._last_incident),
+                "actor_evictions": self._actor_evictions,
+                "expired_actors": self._expired_actors,
+                "expired_cooldowns": self._expired_cooldowns,
+            }
 
     def _is_on_cooldown(self, actor: str, now) -> bool:
         last = self._last_incident.get(actor)

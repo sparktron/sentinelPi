@@ -100,6 +100,7 @@ def create_app(
     alert_manager: "AlertManager",
     responder_manager=None,
     watchdog: Optional["OperationalWatchdog"] = None,
+    component_registry=None,
 ) -> Optional["Flask"]:
     """
     Create and configure the Flask application.
@@ -112,6 +113,7 @@ def create_app(
     app = Flask(__name__, template_folder="templates")
     # Random per-process secret — never a hardcoded value (signs Flask sessions/flashes).
     app.config["SECRET_KEY"] = secrets.token_hex(32)
+    app.config["MAX_CONTENT_LENGTH"] = config.cluster.ingest_max_payload_bytes
     # Harden the login cookie. It carries only an "authenticated" flag (signed by
     # SECRET_KEY, so a client can't forge it), never the token itself.
     app.config.update(
@@ -225,7 +227,9 @@ def create_app(
     @app.route("/api/status")
     @require_token
     def api_status():
-        return jsonify(_status_payload(db, device_tracker, baseline, alert_manager, watchdog))
+        return jsonify(_status_payload(
+            db, device_tracker, baseline, alert_manager, watchdog, component_registry
+        ))
 
     @app.route("/api/events")
     @require_token
@@ -247,7 +251,9 @@ def create_app(
         def _stream():
             tick = 0
             while True:
-                payload = _status_payload(db, device_tracker, baseline, alert_manager, watchdog)
+                payload = _status_payload(
+                    db, device_tracker, baseline, alert_manager, watchdog, component_registry
+                )
                 payload["tick"] = tick
                 yield f"event: dashboard\ndata: {json.dumps(payload, default=str)}\n\n"
                 if once:
@@ -360,9 +366,15 @@ def create_app(
     # sensors don't need a dashboard login. Active only when a key is configured.
     # ------------------------------------------------------------------
     if config.cluster.collector_key:
+        def _ingest_error(code: str, message: str, status: int, field: str = ""):
+            error = {"code": code, "message": message}
+            if field:
+                error["field"] = field
+            return jsonify({"ok": False, "error": error}), status
+
         @app.route("/api/ingest", methods=["POST"])
         def api_ingest():
-            from ..models import alert_from_dict
+            from ..cluster_validation import PayloadValidationError, parse_collector_payload
 
             # Optional mTLS: a fronting reverse proxy verifies the sensor's client
             # certificate and sets this header from $ssl_client_verify. Defense in
@@ -370,21 +382,40 @@ def create_app(
             if config.cluster.ingest_require_verified_header:
                 verified = request.headers.get("X-SentinelPi-Client-Verified", "")
                 if verified != "SUCCESS":
-                    abort(403)
+                    return _ingest_error(
+                        "client_certificate_required",
+                        "a proxy-verified client certificate is required",
+                        403,
+                    )
 
             provided = request.headers.get("X-SentinelPi-Collector-Key", "")
             if not hmac.compare_digest(provided, config.cluster.collector_key):
-                abort(401)
+                return _ingest_error("unauthorized", "invalid collector credentials", 401)
 
-            body = request.get_json(silent=True) or {}
-            alert_data = body.get("alert")
-            if not isinstance(alert_data, dict):
-                return jsonify({"error": "missing 'alert' object"}), 400
+            if not request.is_json:
+                return _ingest_error(
+                    "unsupported_media_type", "Content-Type must be application/json", 415
+                )
+            from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
-            alert = alert_from_dict(alert_data)
+            try:
+                body = request.get_json(silent=False)
+            except RequestEntityTooLarge:
+                return _ingest_error(
+                    "payload_too_large",
+                    f"request body exceeds {config.cluster.ingest_max_payload_bytes} bytes",
+                    413,
+                )
+            except BadRequest:
+                return _ingest_error("invalid_json", "request body is not valid JSON", 400)
+
+            try:
+                sensor_id, alert = parse_collector_payload(body)
+            except PayloadValidationError as exc:
+                return _ingest_error("invalid_field", exc.message, 400, exc.field)
             # Tag with the originating sensor so the collector can tell remote
             # alerts apart (and ForwardNotifier won't bounce them onward).
-            alert.extra["sensor"] = str(body.get("sensor_id", "") or "unknown")
+            alert.extra["sensor"] = sensor_id
             fired = alert_manager.process_one(alert)
             return jsonify({"ok": True, "fired": fired, "alert_id": alert.alert_id})
 
@@ -426,18 +457,31 @@ def create_app(
             "port_rollup": [_port_rollup_row(r) for r in db.get_port_rollup_for_host(ip)],
             "suspicion_trend": db.get_suspicion_history(ip, since=since),
             "response_actions": actions,
+            "trust_history": device_tracker.get_device_trust_history(ip),
         })
 
     @app.route("/api/devices/<path:ip>/trust", methods=["POST"])
     @require_token
     def api_trust_device(ip: str):
-        """Mark a device as trusted (reduces its alert noise)."""
-        device = device_tracker.get_device(ip)
+        """Trust a device through the live, durable policy."""
+        actor = f"dashboard:{request.remote_addr or 'unknown'}"
+        device = device_tracker.set_device_trust(ip, True, actor)
         if not device:
             abort(404)
-        device.is_trusted = True
-        db.upsert_device(device)
-        return jsonify({"ok": True, "ip": ip})
+        return jsonify({"ok": True, "ip": ip, "trusted": True})
+
+    @app.route("/api/devices/<path:ip>/untrust", methods=["POST"])
+    @require_token
+    def api_untrust_device(ip: str):
+        """Remove dashboard-managed trust without overriding configuration."""
+        actor = f"dashboard:{request.remote_addr or 'unknown'}"
+        try:
+            device = device_tracker.set_device_trust(ip, False, actor)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        if not device:
+            abort(404)
+        return jsonify({"ok": True, "ip": ip, "trusted": False})
 
     @app.route("/api/suspicious")
     @require_token
@@ -497,7 +541,9 @@ def _alert_to_dict(alert) -> dict:
     }
 
 
-def _status_payload(db, device_tracker, baseline, alert_manager, watchdog) -> dict:
+def _status_payload(
+    db, device_tracker, baseline, alert_manager, watchdog, component_registry=None
+) -> dict:
     now = clock.now()
     last_24h = now - timedelta(hours=24)
     counts = db.get_alert_counts_by_severity(last_24h)
@@ -512,6 +558,7 @@ def _status_payload(db, device_tracker, baseline, alert_manager, watchdog) -> di
         "baseline": baseline_summary,
         "alert_manager": manager_stats,
         "watchdog": watchdog.get_status() if watchdog is not None else None,
+        "components": component_registry.snapshot() if component_registry is not None else [],
         # Compact health view for the dashboard's degraded-health badge.
         "health": _health_summary(watchdog),
     }

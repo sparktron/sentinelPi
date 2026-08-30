@@ -52,7 +52,7 @@ class PortScanDetector(BaseDetector):
         if event.protocol != "tcp":
             return []
         # Only care about SYN packets (connection initiation)
-        if "S" not in event.flags:
+        if "S" not in event.flags or "A" in event.flags:
             return []
         return self._record_connection(event.src_ip, event.dst_ip, event.dst_port, event.timestamp)
 
